@@ -1,0 +1,18 @@
+# OMC (oh-my-claudecode) 로컬 상태 — 커밋 대상 아님
+.omc/
+
+# ESP-IDF 빌드 산출물
+build/
+sdkconfig.old
+*.pyc
+__pycache__/
+
+# ESP-IDF 컴포넌트 매니저가 받은 의존성 (재생성 가능)
+managed_components/
+dependencies.lock
+
+# LVGL 시뮬레이터 스크린샷 산출물
+firmware/lvgl_sim/shots/
+
+# macOS
+.DS_Store

@@ -1,0 +1,21 @@
+[submodule "examples/VolosR-waveshareLRCL"]
+	path = examples/VolosR-waveshareLRCL
+	url = https://github.com/VolosR/waveshareLRCL.git
+[submodule "examples/JasonHEngineering-RLCD-clock"]
+	path = examples/JasonHEngineering-RLCD-clock
+	url = https://github.com/JasonHEngineering/waveshare_RLCD_400x300_monochrome.git
+[submodule "examples/VolosR-eBikeRLCD"]
+	path = examples/VolosR-eBikeRLCD
+	url = https://github.com/VolosR/eBikeRLCD.git
+[submodule "examples/waveshare-official"]
+	path = examples/waveshare-official
+	url = https://github.com/waveshareteam/ESP32-S3-RLCD-4.2.git
+[submodule "ESP32_Stock_Ticker"]
+	path = ESP32_Stock_Ticker
+	url = https://github.com/mike-rankin/ESP32_Stock_Ticker.git
+[submodule "espstock"]
+	path = espstock
+	url = https://github.com/schlauerlauer/espstock.git
+[submodule "finance-monitor"]
+	path = finance-monitor
+	url = https://github.com/KonradIT/finance-monitor.git
