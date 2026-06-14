@@ -27,8 +27,9 @@ idf.py -p <PORT> flash monitor # 플래시 + 시리얼 모니터 (Ctrl+] 로 종
 
 > **프로젝트 구조**: 이 저장소 루트가 곧 ESP-IDF 프로젝트다 — `CMakeLists.txt`·`main/`·`components/`
 > 가 루트에 있으니 `idf.py` 는 **저장소 루트에서** 실행한다. 펌웨어 앱은 `components/stock_core`
-> (이식성 코어 + 디바이스 포트) + `components/user_app`, 보드 없이 UI를 확인하는 데스크톱
-> 시뮬레이터는 `sim/`, 벤더링한 cJSON 은 `third_party/` 에 있다. 자세한 내용은
+> (이식성 코어 + 디바이스 포트) + `components/user_app`(앱 글루), WiFi/티커를 캡티브 포털로
+> 설정하는 `components/provisioning`(WiFi STA·SoftAP·NVS·SNTP `net_time` 포함), 보드 없이 UI를
+> 확인하는 데스크톱 시뮬레이터는 `sim/`, 벤더링한 cJSON 은 `third_party/` 에 있다. 자세한 내용은
 > [docs/stock-app.md](docs/stock-app.md).
 
 ## 타겟 보드 한눈에 보기
