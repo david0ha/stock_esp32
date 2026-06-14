@@ -4,6 +4,8 @@
 # ESP-IDF 빌드 산출물
 build/
 sdkconfig.old
+# 생성되는 개발자별 설정(Finnhub 키·WiFi 비밀번호 포함) — 절대 커밋 금지. 공유 설정은 sdkconfig.defaults
+sdkconfig
 *.pyc
 __pycache__/
 
@@ -14,5 +16,11 @@ dependencies.lock
 # LVGL 시뮬레이터 스크린샷 산출물
 firmware/lvgl_sim/shots/
 
+# clangd / editor index caches
+.cache/
+
 # macOS
 .DS_Store
+
+# host test/sim run logs
+*.log
