@@ -16,7 +16,7 @@
 #define CONNECTED_BIT BIT0
 #define FAIL_BIT      BIT1
 #define MAX_RETRY     6
-#define SCAN_PERIOD_US (10 * 1000 * 1000)   // re-scan every 10s while the portal is up
+#define SCAN_PERIOD_US (20 * 1000 * 1000)   // re-scan every 20s while the portal is up
 
 static const char *TAG = "prov_wifi";
 
@@ -39,7 +39,8 @@ static prov_ap_t          s_scan_cache[SCAN_CACHE_MAX];
 static size_t             s_scan_cache_count;
 static SemaphoreHandle_t  s_scan_mtx;
 static esp_timer_handle_t s_scan_timer;
-static volatile bool      s_scanning;   // periodic background scan active (portal mode)
+static volatile bool      s_scanning;       // periodic background scan active (portal mode)
+static volatile bool      s_scan_inflight;  // a non-blocking scan is awaiting SCAN_DONE
 
 // Pull the just-completed scan's records into the cache (runs in the Wi-Fi event task).
 static void collect_scan_results(void)
@@ -76,6 +77,7 @@ static void collect_scan_results(void)
         s_scan_cache_count = n;
         xSemaphoreGive(s_scan_mtx);
     }
+    ESP_LOGI(TAG, "scan complete: %u network(s) cached", (unsigned)n);
 }
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -86,9 +88,13 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         return;
     }
     if (id == WIFI_EVENT_SCAN_DONE) {
-        collect_scan_results();
-        if (s_scanning) {
-            esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // schedule the next sweep
+        // Only react to our own async sweeps; the blocking prime collects inline.
+        if (s_scan_inflight) {
+            s_scan_inflight = false;
+            collect_scan_results();
+            if (s_scanning) {
+                esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // schedule the next sweep
+            }
         }
         return;
     }
@@ -209,37 +215,58 @@ void prov_wifi_start_ap(const char *ap_ssid)
     ESP_LOGI(TAG, "SoftAP '%s' up at 192.168.4.1", ap_ssid);
 }
 
-// Kick a non-blocking scan; results arrive via WIFI_EVENT_SCAN_DONE. Used for both the
-// first sweep and each periodic re-scan.
-static void start_scan_once(void)
+// Blocking scan that fills the cache synchronously. Call this BEFORE the SoftAP serves any
+// client (no one to disrupt), so the network list is ready the instant the portal opens.
+static void scan_prime_blocking(void)
 {
     wifi_scan_config_t sc = {0};
     sc.show_hidden = false;
     sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
-    if (esp_wifi_scan_start(&sc, false) != ESP_OK && s_scanning) {
-        // Busy / not ready: try again next period rather than wedging the loop.
-        esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);
+    ESP_LOGI(TAG, "priming initial network scan…");
+    esp_err_t e = esp_wifi_scan_start(&sc, true);   // blocks until the sweep completes
+    if (e == ESP_OK) {
+        collect_scan_results();   // records are available now
+    } else {
+        ESP_LOGW(TAG, "initial scan_start failed: %s", esp_err_to_name(e));
     }
-    // On success, SCAN_DONE collects the results and re-arms the timer.
+}
+
+// Kick a NON-blocking sweep; results arrive via WIFI_EVENT_SCAN_DONE (periodic refresh).
+static void start_async_scan(void)
+{
+    wifi_scan_config_t sc = {0};
+    sc.show_hidden = false;
+    sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    s_scan_inflight = true;
+    esp_err_t e = esp_wifi_scan_start(&sc, false);
+    if (e != ESP_OK) {
+        s_scan_inflight = false;
+        ESP_LOGW(TAG, "async scan_start failed: %s", esp_err_to_name(e));
+        if (s_scanning) {
+            esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // retry next period
+        }
+    }
 }
 
 static void scan_timer_cb(void *arg)
 {
     (void)arg;
-    start_scan_once();
+    start_async_scan();
 }
 
 void prov_wifi_start_scanning(void)
 {
+    scan_prime_blocking();   // synchronous first fill so the list shows immediately
+
     if (!s_scan_timer) {
         const esp_timer_create_args_t args = { .callback = scan_timer_cb, .name = "prov_scan" };
         if (esp_timer_create(&args, &s_scan_timer) != ESP_OK) {
-            ESP_LOGW(TAG, "scan timer create failed; network list will not refresh");
+            ESP_LOGW(TAG, "scan timer create failed; network list will not auto-refresh");
             return;
         }
     }
     s_scanning = true;
-    start_scan_once();  // first sweep immediately; SCAN_DONE then schedules the rest
+    esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // periodic refresh after the prime
 }
 
 size_t prov_wifi_scan_cached(prov_ap_t *out, size_t max)

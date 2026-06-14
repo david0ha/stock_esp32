@@ -94,11 +94,13 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
     char ap_ssid[40];
     snprintf(ap_ssid, sizeof(ap_ssid), "%s-%s", opts->ap_ssid_prefix, suffix);
 
+    // Prime the scan cache while still STA-only (no client to disrupt), then bring up the AP.
+    // The portal's /scan serves this cache; a live scan inside the request would leave the AP
+    // channel and reset the connected phone's session. start_scanning also begins a periodic
+    // background refresh that runs once the AP is up.
+    prov_wifi_start_scanning();
     prov_wifi_start_ap(ap_ssid);
     prov_portal_start(have_config ? &cfg : NULL, on_portal_save, NULL);
-    // Background, non-blocking scanning fills the cache the portal's /scan serves. A live scan
-    // inside the request would leave the AP channel and reset the connected phone's session.
-    prov_wifi_start_scanning();
     emit(PROV_EVENT_PORTAL_STARTED, ap_ssid);
 
     ESP_LOGI(TAG, "setup portal ready — join Wi-Fi '%s' and open http://192.168.4.1", ap_ssid);
