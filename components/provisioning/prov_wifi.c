@@ -41,6 +41,7 @@ static SemaphoreHandle_t  s_scan_mtx;
 static esp_timer_handle_t s_scan_timer;
 static volatile bool      s_scanning;       // periodic background scan active (portal mode)
 static volatile bool      s_scan_inflight;  // a non-blocking scan is awaiting SCAN_DONE
+static volatile int       s_ap_clients;     // stations currently joined to our SoftAP
 
 // Pull the just-completed scan's records into the cache (runs in the Wi-Fi event task).
 static void collect_scan_results(void)
@@ -96,6 +97,16 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
                 esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // schedule the next sweep
             }
         }
+        return;
+    }
+    if (id == WIFI_EVENT_AP_STACONNECTED) {
+        s_ap_clients++;
+        ESP_LOGI(TAG, "AP client joined (%d connected) — pausing background scans", s_ap_clients);
+        return;
+    }
+    if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+        if (s_ap_clients > 0) s_ap_clients--;
+        ESP_LOGI(TAG, "AP client left (%d connected)", s_ap_clients);
         return;
     }
     if (id != WIFI_EVENT_STA_DISCONNECTED) {
@@ -251,6 +262,14 @@ static void start_async_scan(void)
 static void scan_timer_cb(void *arg)
 {
     (void)arg;
+    // Never scan while a phone is using the portal: an off-channel scan resets its TCP
+    // session. The cache keeps the last results; refresh resumes once the client leaves.
+    if (s_ap_clients > 0) {
+        if (s_scanning) {
+            esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);
+        }
+        return;
+    }
     start_async_scan();
 }
 

@@ -28,6 +28,7 @@ static void                  *s_user;
 
 static esp_err_t index_get(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "GET %s (serving portal page)", req->uri);
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, portal_html_start, HTTPD_RESP_USE_STRLEN);
 }
@@ -59,6 +60,7 @@ static esp_err_t scan_get(httpd_req_t *req)
 
 static esp_err_t state_get(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "GET /state");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr_chunk(req, "{\"ssid\":\"");
     if (s_have_current) {
@@ -150,6 +152,8 @@ static esp_err_t save_post(httpd_req_t *req)
 static esp_err_t captive_redirect(httpd_req_t *req, httpd_err_code_t err)
 {
     (void)err;
+    ESP_LOGI(TAG, "captive redirect: %s %s -> /",
+             req->method == HTTP_GET ? "GET" : "?", req->uri);
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_set_type(req, "text/plain");
