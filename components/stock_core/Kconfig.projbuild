@@ -1,10 +1,12 @@
 menu "Stock Monitor"
 
 config STOCK_SYMBOL
-    string "Ticker symbol"
+    string "Fallback ticker symbol"
     default "AAPL"
     help
-      The stock ticker to display, e.g. AAPL, MSFT, TSLA, NVDA.
+      Shown only when the provisioned watchlist is empty. Normally the tickers
+      entered in the captive-portal setup (stored in NVS) drive the display;
+      this is the default before the device has been provisioned.
 
 config STOCK_FINNHUB_API_KEY
     string "Finnhub API key"
@@ -13,17 +15,6 @@ config STOCK_FINNHUB_API_KEY
       Free key from https://finnhub.io. Used for quote, fundamentals and
       news. Stored per-developer in your local sdkconfig — do NOT commit a
       real key. Leave empty to disable the Finnhub-backed screens.
-
-config STOCK_WIFI_SSID
-    string "WiFi SSID"
-    default ""
-    help
-      2.4GHz network the board joins on boot. (WiFi provisioning is left for
-      you to customize; this is a simple Kconfig-driven station connect.)
-
-config STOCK_WIFI_PASSWORD
-    string "WiFi password"
-    default ""
 
 config STOCK_ROTATE_SECONDS
     int "Screen rotate interval (seconds)"

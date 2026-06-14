@@ -13,15 +13,10 @@ idf_component_register(
         "stock_service.c"
         "ui_stock.c"
         "http_port_esp.c"
-        "wifi_conn.c"
         "${CJSON_DIR}/cJSON.c"
     INCLUDE_DIRS "include" "${CJSON_DIR}"
     REQUIRES
         lvgl__lvgl
         esp_http_client
         esp-tls
-        mbedtls
-        esp_wifi
-        esp_netif
-        esp_event
-        lwip)
+        mbedtls)
