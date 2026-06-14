@@ -26,6 +26,12 @@ static volatile bool s_connecting;
 static volatile bool s_online;
 static volatile int  s_retries;
 
+// Networks found by the last pre-AP scan. The captive portal serves these instead of
+// scanning live, which on a single radio would knock the connected setup client offline.
+#define SCAN_CACHE_MAX 24
+static prov_ap_t s_scan_cache[SCAN_CACHE_MAX];
+static size_t    s_scan_cache_count;
+
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -182,6 +188,21 @@ size_t prov_wifi_scan(prov_ap_t *out, size_t max)
         n++;
     }
     free(recs);
+    return n;
+}
+
+void prov_wifi_cache_scan(void)
+{
+    s_scan_cache_count = prov_wifi_scan(s_scan_cache, SCAN_CACHE_MAX);
+    ESP_LOGI(TAG, "cached %u network(s) for the setup portal", (unsigned)s_scan_cache_count);
+}
+
+size_t prov_wifi_scan_cached(prov_ap_t *out, size_t max)
+{
+    size_t n = s_scan_cache_count < max ? s_scan_cache_count : max;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = s_scan_cache[i];
+    }
     return n;
 }
 
