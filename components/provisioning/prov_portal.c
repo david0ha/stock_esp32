@@ -256,27 +256,40 @@ static esp_err_t save_post(httpd_req_t *req)
     return rc;
 }
 
-// Redirect every unknown URL (OS captive-detection probes) to the portal root.
-static esp_err_t captive_redirect(httpd_req_t *req, httpd_err_code_t err)
+// Send a 302 to the portal root. Shared by the explicit OS-probe handlers and the catch-all
+// 404 handler. Connection: close — iOS fires probes in rapid parallel bursts and idle
+// keep-alive sockets would crowd out the real page requests.
+static esp_err_t redirect_to_portal(httpd_req_t *req)
 {
-    (void)err;
-    ESP_LOGI(TAG, "captive redirect: %s %s -> /",
-             req->method == HTTP_GET ? "GET" : "?", req->uri);
-    // Close each captive probe's connection immediately — iOS fires these in rapid parallel
-    // bursts, and leaving them as idle keep-alive sockets is what crowds out the page's XHRs.
     no_keepalive(req);
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_send(req, "redirect", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    return httpd_resp_send(req, "redirect", HTTPD_RESP_USE_STRLEN);
+}
+
+// Explicit handlers for the well-known OS captive-detection probe URLs. Registering them
+// (instead of letting them fall through to the 404 handler) keeps the log clean: httpd logs
+// a "URI not found" warning for every unregistered URI before invoking the error handler.
+static esp_err_t probe_get(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "captive probe %s -> /", req->uri);
+    return redirect_to_portal(req);
+}
+
+// Catch-all for any captive-detection URL not registered above (still redirected to setup).
+static esp_err_t captive_404(httpd_req_t *req, httpd_err_code_t err)
+{
+    (void)err;
+    ESP_LOGI(TAG, "captive redirect (404) %s -> /", req->uri);
+    return redirect_to_portal(req);
 }
 
 static void start_http(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 16;  // "/" + "/save" + the OS captive-probe URLs below
     config.lru_purge_enable = true;
     // The captive WebView issues requests slowly and in bursts; the 5s default tears half-read
     // sockets down with recv errno 104. xiaozhi's esp-wifi-connect uses 15s for the same reason.
@@ -293,11 +306,22 @@ static void start_http(void)
     const httpd_uri_t routes[] = {
         {.uri = "/",     .method = HTTP_GET,  .handler = index_get},
         {.uri = "/save", .method = HTTP_POST, .handler = save_post},
+        // OS captive-detection probes — redirect to the portal. Registered explicitly so they
+        // don't spam the log with "URI not found"; anything else still hits captive_404.
+        {.uri = "/hotspot-detect.html",       .method = HTTP_GET, .handler = probe_get},  // iOS/macOS
+        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = probe_get},  // iOS/macOS
+        {.uri = "/success.html",              .method = HTTP_GET, .handler = probe_get},  // iOS
+        {.uri = "/generate_204",              .method = HTTP_GET, .handler = probe_get},  // Android
+        {.uri = "/gen_204",                   .method = HTTP_GET, .handler = probe_get},  // Android
+        {.uri = "/ncsi.txt",                  .method = HTTP_GET, .handler = probe_get},  // Windows
+        {.uri = "/connecttest.txt",           .method = HTTP_GET, .handler = probe_get},  // Windows
+        {.uri = "/redirect",                  .method = HTTP_GET, .handler = probe_get},  // Windows
+        {.uri = "/canonical.html",            .method = HTTP_GET, .handler = probe_get},  // Firefox
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);
     }
-    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect);
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_404);
 }
 
 // ---------------------------------------------------------------------------
