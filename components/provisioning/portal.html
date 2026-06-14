@@ -52,11 +52,13 @@
     flex:0 0 auto;width:46px;padding:0;display:grid;place-items:center;
     background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
     color:var(--muted);font-size:17px;cursor:pointer;transition:color .15s,border-color .15s;
+    text-decoration:none;
   }
   .iconbtn:hover{color:var(--ink);border-color:#39455a}
   .iconbtn:focus-visible{outline:none;border-color:var(--up);box-shadow:0 0 0 3px var(--ring)}
   .hint{font-size:12px;color:var(--muted);margin-top:8px}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .chips:empty{margin-bottom:0}
   .chip{
     display:inline-flex;align-items:center;gap:8px;padding:7px 10px 7px 12px;
     background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
@@ -82,12 +84,6 @@
   }
   .save:hover:not(:disabled){filter:brightness(1.06)}
   .save:disabled{opacity:.55;cursor:not-allowed}
-  .toast{
-    margin:0 0 12px;padding:11px 13px;border-radius:10px;font-size:14px;display:none;
-    animation:pop .2s ease-out;
-  }
-  .toast.ok{display:block;background:rgba(31,207,143,.13);border:1px solid var(--up);color:var(--up)}
-  .toast.err{display:block;background:rgba(255,92,108,.13);border:1px solid var(--down);color:var(--down)}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(6,35,26,.35);
     border-top-color:#06231a;border-radius:50%;animation:rot .6s linear infinite;vertical-align:-2px;margin-right:7px}
   @keyframes rot{to{transform:rotate(360deg)}}
@@ -106,24 +102,28 @@
     </div>
   </header>
 
-  <form id="form">
+  <!-- Native form POST: the captive-portal WebView (esp. iOS) does not reliably run fetch()/XHR,
+       so the page must work with zero JavaScript. The network list is rendered server-side and
+       submission is a plain form POST. JS below is optional enhancement only. -->
+  <form id="form" method="POST" action="/save" accept-charset="utf-8">
     <div class="card">
       <h2>Network</h2>
       <div class="field">
         <label for="ssid">Wi-Fi network</label>
         <div class="row">
-          <select id="ssid"><option value="">Scanning…</option></select>
-          <button class="iconbtn" type="button" id="rescan" aria-label="Rescan networks" title="Rescan">⟳</button>
+          <select id="ssid" name="ssid">{{OPTIONS}}</select>
+          <a class="iconbtn" href="/" aria-label="Reload network list" title="Reload">⟳</a>
         </div>
       </div>
       <div class="field" id="manualWrap" style="display:none">
         <label for="ssidManual">Network name</label>
-        <input class="input" id="ssidManual" placeholder="Enter network name" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input class="input" id="ssidManual" name="ssid_manual" placeholder="Enter network name"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
       </div>
       <div class="field">
         <label for="pwd">Password</label>
         <div class="row">
-          <input class="input" id="pwd" type="password" placeholder="Leave blank if open" autocomplete="off">
+          <input class="input" id="pwd" name="password" type="password" placeholder="Leave blank if open" autocomplete="off">
           <button class="iconbtn" type="button" id="togglePwd" aria-label="Show password">●</button>
         </div>
       </div>
@@ -132,11 +132,15 @@
     <div class="card">
       <h2>Watchlist</h2>
       <div class="field">
-        <label for="ticker">Symbols to track</label>
+        <label for="tickers">Symbols to track</label>
         <div class="chips" id="chips"></div>
-        <input class="input" id="ticker" placeholder="Add a symbol — e.g. AAPL" autocomplete="off"
-               autocapitalize="characters" spellcheck="false" maxlength="12">
-        <div class="hint">Press Enter or comma to add. Tap a tag to remove.</div>
+        <!-- Real submitted field (comma-separated). Visible & directly editable without JS;
+             JS hides it and drives it through the chip editor below. -->
+        <input class="input" id="tickers" name="tickers" value="{{TICKERS}}"
+               placeholder="AAPL, MSFT, GOOGL" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <input class="input" id="tickerAdd" placeholder="Add a symbol — e.g. AAPL" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" maxlength="12" style="display:none">
+        <div class="hint" id="tickerHint">Separate symbols with commas — e.g. AAPL, MSFT.</div>
       </div>
     </div>
   </form>
@@ -144,20 +148,22 @@
 
 <div class="bar">
   <div class="inner">
-    <div class="toast" id="toast"></div>
     <button class="save" id="save" type="submit" form="form">Save &amp; connect</button>
   </div>
 </div>
 
 <script>
 (function(){
-  var MAX=16;
+  // Progressive enhancement only. If any of this fails or never runs, the page still works:
+  // the <select> is server-rendered and the form does a native POST to /save.
+  var MAX=16, MANUAL="__manual__";
   var $=function(id){return document.getElementById(id)};
   var ssidSel=$("ssid"), manualWrap=$("manualWrap"), ssidManual=$("ssidManual");
-  var chips=[], chipsBox=$("chips"), tickerIn=$("ticker");
+  var tickersField=$("tickers"), addIn=$("tickerAdd"), chipsBox=$("chips"), hint=$("tickerHint");
+  var chips=[];
 
   function esc(s){return s.replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-
+  function syncField(){tickersField.value=chips.join(",")}
   function renderChips(){
     chipsBox.innerHTML="";
     chips.forEach(function(sym){
@@ -167,17 +173,26 @@
       el.querySelector("button").onclick=function(){chips=chips.filter(function(s){return s!==sym});renderChips()};
       chipsBox.appendChild(el);
     });
+    syncField();
   }
   function addTicker(raw){
     var s=(raw||"").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g,"");
     if(!s||s.length>12||chips.length>=MAX||chips.indexOf(s)>=0)return;
     chips.push(s); renderChips();
   }
-  tickerIn.addEventListener("keydown",function(e){
-    if(e.key==="Enter"||e.key===","){e.preventDefault();addTicker(tickerIn.value);tickerIn.value=""}
-    else if(e.key==="Backspace"&&!tickerIn.value&&chips.length){chips.pop();renderChips()}
+
+  // Turn the comma-separated field into chips, then hide it behind the chip editor.
+  (tickersField.value||"").split(",").forEach(function(s){addTicker(s)});
+  tickersField.style.display="none";
+  addIn.style.display="";
+  hint.textContent="Press Enter or comma to add. Tap a tag to remove.";
+  renderChips();
+
+  addIn.addEventListener("keydown",function(e){
+    if(e.key==="Enter"||e.key===","){e.preventDefault();addTicker(addIn.value);addIn.value=""}
+    else if(e.key==="Backspace"&&!addIn.value&&chips.length){chips.pop();renderChips()}
   });
-  tickerIn.addEventListener("blur",function(){if(tickerIn.value){addTicker(tickerIn.value);tickerIn.value=""}});
+  addIn.addEventListener("blur",function(){if(addIn.value){addTicker(addIn.value);addIn.value=""}});
 
   $("togglePwd").onclick=function(){
     var p=$("pwd"); var show=p.type==="password";
@@ -185,79 +200,16 @@
     this.setAttribute("aria-label",show?"Hide password":"Show password");
   };
 
-  var MANUAL=" manual";
-  function fillNetworks(list,keep){
-    ssidSel.innerHTML="";
-    var seen={};
-    (list||[]).forEach(function(n){
-      if(!n.ssid||seen[n.ssid])return; seen[n.ssid]=1;
-      var o=document.createElement("option");
-      o.value=n.ssid;
-      var bars=n.rssi>=-55?"●●●":n.rssi>=-70?"●●":"●";
-      o.textContent=n.ssid+(n.secure?"  🔒":"")+"   "+bars;
-      ssidSel.appendChild(o);
-    });
-    var o2=document.createElement("option"); o2.value=MANUAL; o2.textContent="Other network…";
-    ssidSel.appendChild(o2);
-    if(keep&&!seen[keep]&&keep!==MANUAL){
-      var ok=document.createElement("option"); ok.value=keep; ok.textContent=keep+"  (saved)";
-      ssidSel.insertBefore(ok,ssidSel.firstChild);
-    }
-    if(keep)ssidSel.value=keep;
-    syncManual();
-  }
   function syncManual(){manualWrap.style.display=ssidSel.value===MANUAL?"block":"none"}
   ssidSel.addEventListener("change",syncManual);
+  syncManual();
 
-  // The device scans in the background and /scan returns its cache, so this is cheap to poll.
-  // `auto` (periodic) refreshes silently and preserves the user's current pick; a manual ⟳ or
-  // first load shows the "Scanning…" placeholder.
-  function scan(auto){
-    var cur=ssidSel.value;
-    if(!auto&&!cur)ssidSel.innerHTML='<option value="">Scanning…</option>';
-    fetch("/scan").then(function(r){return r.json()}).then(function(d){
-      fillNetworks(d.networks, cur||ssidSel.dataset.keep||"");
-    }).catch(function(){if(!auto&&!cur)ssidSel.innerHTML='<option value="">Scan failed — tap ⟳</option>'});
-  }
-  $("rescan").onclick=function(){scan(false)};
-  setInterval(function(){scan(true)},6000);   // keep the list fresh as the cache updates
-
-  function loadState(){
-    fetch("/state").then(function(r){return r.json()}).then(function(d){
-      if(d.tickers){chips=d.tickers.slice(0,MAX);renderChips()}
-      if(d.ssid){ssidSel.dataset.keep=d.ssid}
-    }).catch(function(){}).then(function(){scan(false)});
-  }
-
-  function toast(msg,kind){var t=$("toast");t.textContent=msg;t.className="toast "+kind}
-
-  $("form").addEventListener("submit",function(e){
-    e.preventDefault();
-    if(tickerIn.value){addTicker(tickerIn.value);tickerIn.value=""}
-    var ssid=ssidSel.value===MANUAL?ssidManual.value.trim():ssidSel.value;
-    if(!ssid){toast("Choose a Wi-Fi network first.","err");return}
-    var btn=$("save"); btn.disabled=true;
-    btn.innerHTML='<span class="spin"></span>Saving…';
-    var body="ssid="+encodeURIComponent(ssid)+
-             "&password="+encodeURIComponent($("pwd").value)+
-             "&tickers="+encodeURIComponent(chips.join(","));
-    fetch("/save",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body})
-      .then(function(r){return r.json().catch(function(){return{ok:r.ok}})})
-      .then(function(d){
-        if(d&&d.ok){
-          toast("Saved. The display is reconnecting to “"+ssid+"”. You can close this page.","ok");
-        }else{
-          toast((d&&d.error)||"Could not save. Please try again.","err");
-          btn.disabled=false; btn.textContent="Save & connect";
-        }
-      })
-      .catch(function(){
-        // Device may reboot before responding — treat as success.
-        toast("Saved. The display is reconnecting. You can close this page.","ok");
-      });
+  // Make sure the typed-but-not-yet-added symbol is captured, and give immediate feedback.
+  $("form").addEventListener("submit",function(){
+    if(addIn.value){addTicker(addIn.value);addIn.value=""}
+    if(ssidSel.value===MANUAL && !ssidManual.value.trim())return; // let native validation/flow continue
+    var btn=$("save"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Saving…';
   });
-
-  loadState();
 })();
 </script>
 </body>
