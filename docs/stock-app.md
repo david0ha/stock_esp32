@@ -17,7 +17,7 @@ components/stock_core/                 (대부분 플랫폼 비종속, 펌웨어
 ├── wifi_conn.c              [펌웨어 전용] Kconfig 기반 WiFi STA + SNTP
 └── Kconfig                  사용자 설정(아래)
 
-firmware/lvgl_sim/http_port_curl.c     [시뮬레이터 전용] 동일 http_get 을 libcurl 로 구현
+sim/http_port_curl.c     [시뮬레이터 전용] 동일 http_get 을 libcurl 로 구현
 ```
 
 `http_get` 위의 모든 코드(파서·서비스·UI)는 펌웨어와 시뮬레이터가 **글자 그대로 동일**하게
@@ -58,21 +58,21 @@ firmware/lvgl_sim/http_port_curl.c     [시뮬레이터 전용] 동일 http_get 
 
 ### 시뮬레이터 (보드 없이, 맥에서 실데이터 검증)
 ```bash
-cd firmware/lvgl_sim
+cd sim
 FINNHUB_KEY=<키> STOCK_SYMBOL=AAPL ./sim.sh
 # → shots/sim_page0.png(차트) sim_page1.png(뉴스) sim_page2.png(지표)
 ```
 
 ### 호스트 단위 테스트 (파서)
 ```bash
-cd firmware/lvgl_v9_test/components/stock_core/test/host
+cd components/stock_core/test/host
 cmake -S . -B build && cmake --build build && ./build/test_parse
 ```
 
 ### 펌웨어 (디바이스)
 ```bash
 source "/Users/mimi/.espressif/tools/activate_idf_v6.0.1.sh"
-cd firmware/lvgl_v9_test
+cd <repo root>            # ESP-IDF 프로젝트 = 저장소 루트
 idf.py menuconfig          # Stock Monitor 메뉴에서 키/SSID/심볼 설정
 idf.py build
 idf.py -p <PORT> flash monitor

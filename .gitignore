@@ -14,7 +14,7 @@ managed_components/
 dependencies.lock
 
 # LVGL 시뮬레이터 스크린샷 산출물
-firmware/lvgl_sim/shots/
+sim/shots/
 
 # clangd / editor index caches
 .cache/
