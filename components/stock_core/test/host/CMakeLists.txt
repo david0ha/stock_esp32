@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Paths relative to this file.
 set(CORE   ${CMAKE_CURRENT_SOURCE_DIR}/../..)        # components/stock_core
-set(CJSON  ${CORE}/../../../third_party/cJSON)        # firmware/third_party/cJSON
+set(CJSON  ${CORE}/../../third_party/cJSON)           # <root>/third_party/cJSON
 
 add_executable(test_parse
     test_parse.c

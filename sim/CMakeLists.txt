@@ -13,11 +13,11 @@ set(LV_CONF_BUILD_DISABLE_EXAMPLES 1 CACHE INTERNAL "")
 set(LV_CONF_BUILD_DISABLE_DEMOS 1 CACHE INTERNAL "")
 set(LV_CONF_BUILD_DISABLE_THORVG_INTERNAL 1 CACHE INTERNAL "")
 
-set(EX    ${CMAKE_CURRENT_SOURCE_DIR}/../lvgl_v9_test)
+set(EX    ${CMAKE_CURRENT_SOURCE_DIR}/..)               # repo root = the IDF project
 set(CORE  ${EX}/components/stock_core)
 set(CJSON ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cJSON)
 
-# Reuse the firmware's LVGL source (fetched into managed_components).
+# Reuse the IDF project's LVGL source (fetched into managed_components/).
 add_subdirectory(${EX}/managed_components/lvgl__lvgl ${CMAKE_BINARY_DIR}/lvgl)
 
 # The shared stock core is compiled verbatim; only the HTTP port is host-specific.
