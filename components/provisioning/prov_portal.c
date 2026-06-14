@@ -35,7 +35,8 @@ static esp_err_t index_get(httpd_req_t *req)
 static esp_err_t scan_get(httpd_req_t *req)
 {
     static prov_ap_t aps[24];
-    size_t count = prov_wifi_scan(aps, sizeof(aps) / sizeof(aps[0]));
+    // Serve the cache from the pre-AP scan; scanning live here would drop the connected client.
+    size_t count = prov_wifi_scan_cached(aps, sizeof(aps) / sizeof(aps[0]));
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr_chunk(req, "{\"networks\":[");
