@@ -209,19 +209,24 @@
   function syncManual(){manualWrap.style.display=ssidSel.value===MANUAL?"block":"none"}
   ssidSel.addEventListener("change",syncManual);
 
-  function scan(){
-    ssidSel.innerHTML='<option value="">Scanning…</option>';
+  // The device scans in the background and /scan returns its cache, so this is cheap to poll.
+  // `auto` (periodic) refreshes silently and preserves the user's current pick; a manual ⟳ or
+  // first load shows the "Scanning…" placeholder.
+  function scan(auto){
+    var cur=ssidSel.value;
+    if(!auto&&!cur)ssidSel.innerHTML='<option value="">Scanning…</option>';
     fetch("/scan").then(function(r){return r.json()}).then(function(d){
-      fillNetworks(d.networks, ssidSel.dataset.keep||"");
-    }).catch(function(){ssidSel.innerHTML='<option value="">Scan failed — tap ⟳</option>'});
+      fillNetworks(d.networks, cur||ssidSel.dataset.keep||"");
+    }).catch(function(){if(!auto&&!cur)ssidSel.innerHTML='<option value="">Scan failed — tap ⟳</option>'});
   }
-  $("rescan").onclick=scan;
+  $("rescan").onclick=function(){scan(false)};
+  setInterval(function(){scan(true)},6000);   // keep the list fresh as the cache updates
 
   function loadState(){
     fetch("/state").then(function(r){return r.json()}).then(function(d){
       if(d.tickers){chips=d.tickers.slice(0,MAX);renderChips()}
       if(d.ssid){ssidSel.dataset.keep=d.ssid}
-    }).catch(function(){}).then(scan);
+    }).catch(function(){}).then(function(){scan(false)});
   }
 
   function toast(msg,kind){var t=$("toast");t.textContent=msg;t.className="toast "+kind}

@@ -37,8 +37,8 @@ STA attempt fails and the portal comes back up.
 | File | Responsibility |
 |------|----------------|
 | `prov_store.{h,c}`  | NVS load/save/clear (namespace `prov`); `prov_store_save` returns commit status |
-| `prov_wifi.{h,c}`   | STA connect (bounded initial retry → then **persistent** reconnect once online), SoftAP, scan |
-| `prov_portal.{h,c}` | HTTP server + DNS hijack captive portal (rejects over-length / NUL-injected fields) |
+| `prov_wifi.{h,c}`   | STA connect (bounded initial retry → then **persistent** reconnect once online), SoftAP, **non-blocking background scan → cache** |
+| `prov_portal.{h,c}` | HTTP server + DNS hijack captive portal; `/scan` returns the cache (never scans live), rejects over-length / NUL-injected fields |
 | `provisioning.{h,c}`| orchestrator (`provisioning_run`) + public API; only reboots on a confirmed save |
 | `net_time.{h,c}`    | one-shot SNTP sync after connect (news window + chart labels); deinits when done |
 | `portal.html`       | self-contained setup page (embedded via `EMBED_TXTFILES`) |

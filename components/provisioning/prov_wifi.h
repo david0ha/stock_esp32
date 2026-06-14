@@ -26,17 +26,14 @@ bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_
 // Bring up an open SoftAP named `ap_ssid` (mode becomes APSTA).
 void prov_wifi_start_ap(const char *ap_ssid);
 
-// Blocking scan of nearby networks; writes up to `max` entries into `out`, returns the count.
-size_t prov_wifi_scan(prov_ap_t *out, size_t max);
+// Begin periodic, NON-BLOCKING background scanning (every ~10s) that publishes results into an
+// internal cache via WIFI_EVENT_SCAN_DONE. Call once after the SoftAP is up. The captive portal
+// must serve the cache (prov_wifi_scan_cached), never scan live inside a request — a blocking
+// scan there would leave the AP channel and reset the connected client's TCP session.
+void prov_wifi_start_scanning(void);
 
-// Refresh the cached scan results by scanning now. Call this BEFORE bringing up the SoftAP
-// (while no client is connected): a scan briefly leaves the AP channel, which would reset a
-// connected setup client's TCP session — so the captive portal must serve cached results, not
-// scan live.
-void prov_wifi_cache_scan(void);
-
-// Copy up to `max` cached entries (from the last prov_wifi_cache_scan) into `out`; returns the
-// count. Non-disruptive — safe to call while serving the captive portal.
+// Copy up to `max` cached scan entries into `out`; returns the count. Non-disruptive (no radio
+// activity) — safe to call from the HTTP handler while serving the captive portal.
 size_t prov_wifi_scan_cached(prov_ap_t *out, size_t max);
 
 // Write the 4-hex-digit MAC suffix (e.g. "9F3A") into `out` (needs >= 5 bytes).

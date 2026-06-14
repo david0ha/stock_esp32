@@ -94,13 +94,11 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
     char ap_ssid[40];
     snprintf(ap_ssid, sizeof(ap_ssid), "%s-%s", opts->ap_ssid_prefix, suffix);
 
-    // Scan now, while still STA-only with no client attached. Once the SoftAP is up and a
-    // phone is connected, a live scan would leave the AP channel and reset that connection,
-    // so the portal serves these cached results instead.
-    prov_wifi_cache_scan();
-
     prov_wifi_start_ap(ap_ssid);
     prov_portal_start(have_config ? &cfg : NULL, on_portal_save, NULL);
+    // Background, non-blocking scanning fills the cache the portal's /scan serves. A live scan
+    // inside the request would leave the AP channel and reset the connected phone's session.
+    prov_wifi_start_scanning();
     emit(PROV_EVENT_PORTAL_STARTED, ap_ssid);
 
     ESP_LOGI(TAG, "setup portal ready — join Wi-Fi '%s' and open http://192.168.4.1", ap_ssid);

@@ -5,15 +5,18 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 
 #define CONNECTED_BIT BIT0
 #define FAIL_BIT      BIT1
 #define MAX_RETRY     6
+#define SCAN_PERIOD_US (10 * 1000 * 1000)   // re-scan every 10s while the portal is up
 
 static const char *TAG = "prov_wifi";
 
@@ -26,17 +29,70 @@ static volatile bool s_connecting;
 static volatile bool s_online;
 static volatile int  s_retries;
 
-// Networks found by the last pre-AP scan. The captive portal serves these instead of
-// scanning live, which on a single radio would knock the connected setup client offline.
+// Background-scan cache. The captive portal's /scan returns this cache instead of scanning
+// live: on a single radio a blocking scan inside the request would leave the AP channel and
+// reset the connected client's TCP session (the "Scanning…" hang). A non-blocking scan runs
+// on a timer, and WIFI_EVENT_SCAN_DONE publishes results here under s_scan_mtx — the same
+// pattern xiaozhi's esp-wifi-connect uses. Written by the Wi-Fi event task, read by httpd.
 #define SCAN_CACHE_MAX 24
-static prov_ap_t s_scan_cache[SCAN_CACHE_MAX];
-static size_t    s_scan_cache_count;
+static prov_ap_t          s_scan_cache[SCAN_CACHE_MAX];
+static size_t             s_scan_cache_count;
+static SemaphoreHandle_t  s_scan_mtx;
+static esp_timer_handle_t s_scan_timer;
+static volatile bool      s_scanning;   // periodic background scan active (portal mode)
+
+// Pull the just-completed scan's records into the cache (runs in the Wi-Fi event task).
+static void collect_scan_results(void)
+{
+    uint16_t found = 0;
+    esp_wifi_scan_get_ap_num(&found);
+
+    prov_ap_t tmp[SCAN_CACHE_MAX];
+    size_t n = 0;
+    if (found > 0) {
+        wifi_ap_record_t *recs = calloc(found, sizeof(*recs));
+        if (recs) {
+            uint16_t got = found;
+            esp_wifi_scan_get_ap_records(&got, recs);
+            for (uint16_t i = 0; i < got && n < SCAN_CACHE_MAX; i++) {
+                if (recs[i].ssid[0] == '\0') {
+                    continue;  // hidden / empty SSID
+                }
+                strlcpy(tmp[n].ssid, (const char *)recs[i].ssid, sizeof(tmp[n].ssid));
+                tmp[n].rssi = recs[i].rssi;
+                tmp[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+                n++;
+            }
+            free(recs);
+        } else {
+            esp_wifi_clear_ap_list();  // OOM: still free the driver's internal list
+        }
+    } else {
+        esp_wifi_clear_ap_list();
+    }
+
+    if (s_scan_mtx && xSemaphoreTake(s_scan_mtx, pdMS_TO_TICKS(100)) == pdTRUE) {
+        memcpy(s_scan_cache, tmp, n * sizeof(prov_ap_t));
+        s_scan_cache_count = n;
+        xSemaphoreGive(s_scan_mtx);
+    }
+}
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     (void)data;
-    if (base != WIFI_EVENT || id != WIFI_EVENT_STA_DISCONNECTED) {
+    if (base != WIFI_EVENT) {
+        return;
+    }
+    if (id == WIFI_EVENT_SCAN_DONE) {
+        collect_scan_results();
+        if (s_scanning) {
+            esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);  // schedule the next sweep
+        }
+        return;
+    }
+    if (id != WIFI_EVENT_STA_DISCONNECTED) {
         return;
     }
     if (s_connecting) {
@@ -83,9 +139,10 @@ void prov_wifi_init(void)
     // We persist credentials ourselves in NVS, so keep the driver's own copy in RAM only.
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
-    // Create the event group before registering handlers so an early event can
-    // never dereference a NULL s_events.
+    // Create the event group + scan mutex before registering handlers so an early
+    // event can never dereference them while NULL.
     s_events = xEventGroupCreate();
+    s_scan_mtx = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi_event, NULL, NULL));
@@ -152,56 +209,48 @@ void prov_wifi_start_ap(const char *ap_ssid)
     ESP_LOGI(TAG, "SoftAP '%s' up at 192.168.4.1", ap_ssid);
 }
 
-size_t prov_wifi_scan(prov_ap_t *out, size_t max)
+// Kick a non-blocking scan; results arrive via WIFI_EVENT_SCAN_DONE. Used for both the
+// first sweep and each periodic re-scan.
+static void start_scan_once(void)
 {
     wifi_scan_config_t sc = {0};
     sc.show_hidden = false;
     sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
-
-    if (esp_wifi_scan_start(&sc, true) != ESP_OK) {
-        return 0;
+    if (esp_wifi_scan_start(&sc, false) != ESP_OK && s_scanning) {
+        // Busy / not ready: try again next period rather than wedging the loop.
+        esp_timer_start_once(s_scan_timer, SCAN_PERIOD_US);
     }
-
-    uint16_t found = 0;
-    esp_wifi_scan_get_ap_num(&found);
-    if (found == 0) {
-        return 0;
-    }
-
-    wifi_ap_record_t *recs = calloc(found, sizeof(wifi_ap_record_t));
-    if (recs == NULL) {
-        esp_wifi_clear_ap_list();
-        return 0;
-    }
-
-    uint16_t got = found;
-    esp_wifi_scan_get_ap_records(&got, recs);
-
-    size_t n = 0;
-    for (uint16_t i = 0; i < got && n < max; i++) {
-        if (recs[i].ssid[0] == '\0') {
-            continue;  // hidden / empty SSID
-        }
-        strlcpy(out[n].ssid, (const char *)recs[i].ssid, sizeof(out[n].ssid));
-        out[n].rssi = recs[i].rssi;
-        out[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
-        n++;
-    }
-    free(recs);
-    return n;
+    // On success, SCAN_DONE collects the results and re-arms the timer.
 }
 
-void prov_wifi_cache_scan(void)
+static void scan_timer_cb(void *arg)
 {
-    s_scan_cache_count = prov_wifi_scan(s_scan_cache, SCAN_CACHE_MAX);
-    ESP_LOGI(TAG, "cached %u network(s) for the setup portal", (unsigned)s_scan_cache_count);
+    (void)arg;
+    start_scan_once();
+}
+
+void prov_wifi_start_scanning(void)
+{
+    if (!s_scan_timer) {
+        const esp_timer_create_args_t args = { .callback = scan_timer_cb, .name = "prov_scan" };
+        if (esp_timer_create(&args, &s_scan_timer) != ESP_OK) {
+            ESP_LOGW(TAG, "scan timer create failed; network list will not refresh");
+            return;
+        }
+    }
+    s_scanning = true;
+    start_scan_once();  // first sweep immediately; SCAN_DONE then schedules the rest
 }
 
 size_t prov_wifi_scan_cached(prov_ap_t *out, size_t max)
 {
-    size_t n = s_scan_cache_count < max ? s_scan_cache_count : max;
-    for (size_t i = 0; i < n; i++) {
-        out[i] = s_scan_cache[i];
+    size_t n = 0;
+    if (s_scan_mtx && xSemaphoreTake(s_scan_mtx, pdMS_TO_TICKS(100)) == pdTRUE) {
+        n = s_scan_cache_count < max ? s_scan_cache_count : max;
+        for (size_t i = 0; i < n; i++) {
+            out[i] = s_scan_cache[i];
+        }
+        xSemaphoreGive(s_scan_mtx);
     }
     return n;
 }
