@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ticker Board · Setup</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#141925; --panel-2:#1b2230; --line:#262e3d;
+    --ink:#e8edf4; --muted:#8a93a6; --up:#1fcf8f; --down:#ff5c6c;
+    --ring:rgba(31,207,143,.55); --shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1200px 600px at 50% -10%,#111726 0,var(--bg) 60%);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    min-height:100vh; padding:24px 16px calc(120px + env(safe-area-inset-bottom));
+  }
+  .wrap{max-width:460px;margin:0 auto}
+  header{display:flex;align-items:center;gap:12px;margin:6px 2px 22px}
+  .mark{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px}
+  .mark svg{display:block}
+  .mark b{font-size:18px}
+  .mark .sub{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-top:1px}
+  .card{
+    background:linear-gradient(180deg,var(--panel),#11151f);
+    border:1px solid var(--line); border-radius:16px; padding:18px 16px;
+    margin-bottom:16px; box-shadow:var(--shadow);
+  }
+  .card h2{margin:0 0 14px;font-size:13px;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted)}
+  label{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
+  .field{margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  .input,select{
+    width:100%;padding:12px 13px;background:var(--panel-2);color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;
+    transition:border-color .15s,box-shadow .15s;appearance:none;-webkit-appearance:none;
+  }
+  .input::placeholder{color:#5d6678}
+  .input:focus,select:focus{outline:none;border-color:var(--up);box-shadow:0 0 0 3px var(--ring)}
+  select{
+    background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%238a93a6' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 12px center;padding-right:34px;
+  }
+  .row{display:flex;gap:8px}
+  .row .input,.row select{flex:1}
+  .iconbtn{
+    flex:0 0 auto;width:46px;padding:0;display:grid;place-items:center;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+    color:var(--muted);font-size:17px;cursor:pointer;transition:color .15s,border-color .15s;
+  }
+  .iconbtn:hover{color:var(--ink);border-color:#39455a}
+  .iconbtn:focus-visible{outline:none;border-color:var(--up);box-shadow:0 0 0 3px var(--ring)}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .chip{
+    display:inline-flex;align-items:center;gap:8px;padding:7px 10px 7px 12px;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+    font-size:14px;font-weight:600;letter-spacing:.02em;
+    font-variant-numeric:tabular-nums;animation:pop .14s ease-out;
+  }
+  .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--up)}
+  .chip button{
+    border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px;
+    line-height:1;padding:2px;border-radius:6px;
+  }
+  .chip button:hover{color:var(--down)}
+  @keyframes pop{from{opacity:0;transform:translateY(-4px) scale(.96)}to{opacity:1;transform:none}}
+  .bar{
+    position:fixed;left:0;right:0;bottom:0;padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,rgba(11,14,20,0),#0b0e14 38%);
+  }
+  .bar .inner{max-width:460px;margin:0 auto}
+  .save{
+    width:100%;padding:15px;border:0;border-radius:12px;cursor:pointer;
+    background:var(--up);color:#06231a;font-size:16px;font-weight:700;letter-spacing:.02em;
+    transition:filter .15s,opacity .15s;
+  }
+  .save:hover:not(:disabled){filter:brightness(1.06)}
+  .save:disabled{opacity:.55;cursor:not-allowed}
+  .toast{
+    margin:0 0 12px;padding:11px 13px;border-radius:10px;font-size:14px;display:none;
+    animation:pop .2s ease-out;
+  }
+  .toast.ok{display:block;background:rgba(31,207,143,.13);border:1px solid var(--up);color:var(--up)}
+  .toast.err{display:block;background:rgba(255,92,108,.13);border:1px solid var(--down);color:var(--down)}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(6,35,26,.35);
+    border-top-color:#06231a;border-radius:50%;animation:rot .6s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes rot{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">
+      <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+        <rect x="1" y="1" width="28" height="28" rx="8" fill="#10b981" opacity=".12"/>
+        <path d="M5 19 L11 13 L15 16 L24 7" fill="none" stroke="#1fcf8f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M24 7 L24 12 M24 7 L19 7" fill="none" stroke="#1fcf8f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span><b>Ticker Board</b><span class="sub">Connect your display</span></span>
+    </div>
+  </header>
+
+  <form id="form">
+    <div class="card">
+      <h2>Network</h2>
+      <div class="field">
+        <label for="ssid">Wi-Fi network</label>
+        <div class="row">
+          <select id="ssid"><option value="">Scanning…</option></select>
+          <button class="iconbtn" type="button" id="rescan" aria-label="Rescan networks" title="Rescan">⟳</button>
+        </div>
+      </div>
+      <div class="field" id="manualWrap" style="display:none">
+        <label for="ssidManual">Network name</label>
+        <input class="input" id="ssidManual" placeholder="Enter network name" autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="pwd">Password</label>
+        <div class="row">
+          <input class="input" id="pwd" type="password" placeholder="Leave blank if open" autocomplete="off">
+          <button class="iconbtn" type="button" id="togglePwd" aria-label="Show password">●</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Watchlist</h2>
+      <div class="field">
+        <label for="ticker">Symbols to track</label>
+        <div class="chips" id="chips"></div>
+        <input class="input" id="ticker" placeholder="Add a symbol — e.g. AAPL" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" maxlength="12">
+        <div class="hint">Press Enter or comma to add. Tap a tag to remove.</div>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="bar">
+  <div class="inner">
+    <div class="toast" id="toast"></div>
+    <button class="save" id="save" type="submit" form="form">Save &amp; connect</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var MAX=16;
+  var $=function(id){return document.getElementById(id)};
+  var ssidSel=$("ssid"), manualWrap=$("manualWrap"), ssidManual=$("ssidManual");
+  var chips=[], chipsBox=$("chips"), tickerIn=$("ticker");
+
+  function esc(s){return s.replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+
+  function renderChips(){
+    chipsBox.innerHTML="";
+    chips.forEach(function(sym){
+      var el=document.createElement("span");
+      el.className="chip";
+      el.innerHTML='<span class="dot"></span>'+esc(sym)+' <button type="button" aria-label="Remove '+esc(sym)+'">×</button>';
+      el.querySelector("button").onclick=function(){chips=chips.filter(function(s){return s!==sym});renderChips()};
+      chipsBox.appendChild(el);
+    });
+  }
+  function addTicker(raw){
+    var s=(raw||"").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g,"");
+    if(!s||s.length>12||chips.length>=MAX||chips.indexOf(s)>=0)return;
+    chips.push(s); renderChips();
+  }
+  tickerIn.addEventListener("keydown",function(e){
+    if(e.key==="Enter"||e.key===","){e.preventDefault();addTicker(tickerIn.value);tickerIn.value=""}
+    else if(e.key==="Backspace"&&!tickerIn.value&&chips.length){chips.pop();renderChips()}
+  });
+  tickerIn.addEventListener("blur",function(){if(tickerIn.value){addTicker(tickerIn.value);tickerIn.value=""}});
+
+  $("togglePwd").onclick=function(){
+    var p=$("pwd"); var show=p.type==="password";
+    p.type=show?"text":"password"; this.textContent=show?"○":"●";
+    this.setAttribute("aria-label",show?"Hide password":"Show password");
+  };
+
+  var MANUAL=" manual";
+  function fillNetworks(list,keep){
+    ssidSel.innerHTML="";
+    var seen={};
+    (list||[]).forEach(function(n){
+      if(!n.ssid||seen[n.ssid])return; seen[n.ssid]=1;
+      var o=document.createElement("option");
+      o.value=n.ssid;
+      var bars=n.rssi>=-55?"●●●":n.rssi>=-70?"●●":"●";
+      o.textContent=n.ssid+(n.secure?"  🔒":"")+"   "+bars;
+      ssidSel.appendChild(o);
+    });
+    var o2=document.createElement("option"); o2.value=MANUAL; o2.textContent="Other network…";
+    ssidSel.appendChild(o2);
+    if(keep&&!seen[keep]&&keep!==MANUAL){
+      var ok=document.createElement("option"); ok.value=keep; ok.textContent=keep+"  (saved)";
+      ssidSel.insertBefore(ok,ssidSel.firstChild);
+    }
+    if(keep)ssidSel.value=keep;
+    syncManual();
+  }
+  function syncManual(){manualWrap.style.display=ssidSel.value===MANUAL?"block":"none"}
+  ssidSel.addEventListener("change",syncManual);
+
+  function scan(){
+    ssidSel.innerHTML='<option value="">Scanning…</option>';
+    fetch("/scan").then(function(r){return r.json()}).then(function(d){
+      fillNetworks(d.networks, ssidSel.dataset.keep||"");
+    }).catch(function(){ssidSel.innerHTML='<option value="">Scan failed — tap ⟳</option>'});
+  }
+  $("rescan").onclick=scan;
+
+  function loadState(){
+    fetch("/state").then(function(r){return r.json()}).then(function(d){
+      if(d.tickers){chips=d.tickers.slice(0,MAX);renderChips()}
+      if(d.ssid){ssidSel.dataset.keep=d.ssid}
+    }).catch(function(){}).then(scan);
+  }
+
+  function toast(msg,kind){var t=$("toast");t.textContent=msg;t.className="toast "+kind}
+
+  $("form").addEventListener("submit",function(e){
+    e.preventDefault();
+    if(tickerIn.value){addTicker(tickerIn.value);tickerIn.value=""}
+    var ssid=ssidSel.value===MANUAL?ssidManual.value.trim():ssidSel.value;
+    if(!ssid){toast("Choose a Wi-Fi network first.","err");return}
+    var btn=$("save"); btn.disabled=true;
+    btn.innerHTML='<span class="spin"></span>Saving…';
+    var body="ssid="+encodeURIComponent(ssid)+
+             "&password="+encodeURIComponent($("pwd").value)+
+             "&tickers="+encodeURIComponent(chips.join(","));
+    fetch("/save",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body})
+      .then(function(r){return r.json().catch(function(){return{ok:r.ok}})})
+      .then(function(d){
+        if(d&&d.ok){
+          toast("Saved. The display is reconnecting to “"+ssid+"”. You can close this page.","ok");
+        }else{
+          toast((d&&d.error)||"Could not save. Please try again.","err");
+          btn.disabled=false; btn.textContent="Save & connect";
+        }
+      })
+      .catch(function(){
+        // Device may reboot before responding — treat as success.
+        toast("Saved. The display is reconnecting. You can close this page.","ok");
+      });
+  });
+
+  loadState();
+})();
+</script>
+</body>
+</html>
