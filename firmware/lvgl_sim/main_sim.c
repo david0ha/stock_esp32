@@ -1,122 +1,143 @@
 /*
- * LVGL 데스크톱 시뮬레이터 (헤드리스 → PNG 스크린샷)
+ * LVGL desktop simulator for the stock monitor (headless -> PNG).
  *
- * ESP32-S3-RLCD-4.2 의 LVGL UI(GUI Guider 생성)를 보드 없이 렌더링한다.
- * 디바이스의 Lvgl_FlushCallback 과 동일하게 RGB565 프레임버퍼를
- * `(픽셀 < 0x7FFF) ? 검정 : 흰색` 규칙으로 이진화하여, 반사형 흑백 패널에
- * 실제로 보일 모습을 그대로 BMP로 저장한다(이후 sips로 PNG 변환).
+ * Renders the real UI with REAL data: it runs the same stock_service +
+ * parsers used on the device, fetching live over libcurl (this Mac has
+ * internet; the board does not while I work). It then binarizes the RGB565
+ * framebuffer with the device's exact rule (px < 0x7FFF ? black : white) and
+ * writes one BMP per page so I can see what the reflective panel will show.
  *
- * 사용법: ./sim [출력디렉토리]   (기본 /tmp)
- *   sim_frame1.bmp = screen_img_1, sim_frame2.bmp = screen_img_2
+ *   FINNHUB_KEY=... STOCK_SYMBOL=AAPL ./build/sim shots
+ *
+ * Yahoo rate-limits this host's IP, so when the intraday series can't be
+ * fetched the chart falls back to a synthetic intraday walk (clearly logged)
+ * purely so the chart renderer can be verified. On the board (different IP)
+ * the live Yahoo path is used.
  */
 #include "lvgl.h"
-#include "gui_guider.h"
+#include "ui_stock.h"
+#include "stock_service.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 #define HOR 400
 #define VER 300
 
-static uint8_t  fb[HOR * VER * 2];      /* LVGL 드로우 버퍼 (RGB565, FULL 모드) */
-static uint16_t capture[HOR * VER];     /* 마지막 풀프레임 캡처 */
-static int      captured = 0;
+static uint8_t  fb[HOR * VER * 2];
+static uint16_t capture[HOR * VER];
 static uint32_t g_tick = 0;
 
 static uint32_t tick_cb(void) { return g_tick; }
 
-static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px)
-{
-    int w = a->x2 - a->x1 + 1;
-    int h = a->y2 - a->y1 + 1;
-    if (w == HOR && h == VER) {          /* FULL 모드: 전체 화면 한 번에 */
-        memcpy(capture, px, sizeof(capture));
-        captured = 1;
-    }
+static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px) {
+    int w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+    if (w == HOR && h == VER) memcpy(capture, px, sizeof(capture));
     lv_display_flush_ready(d);
 }
 
-static void run_refresh(int steps)
-{
-    for (int i = 0; i < steps; i++) {
-        g_tick += 16;
-        lv_timer_handler();
-    }
+static void run_refresh(int steps) {
+    for (int i = 0; i < steps; i++) { g_tick += 16; lv_timer_handler(); }
 }
 
-/* capture[] (RGB565) → 24bit BMP, 디바이스와 동일한 임계값으로 흑백화 */
-static void write_mono_bmp(const char *path)
-{
-    int W = HOR, H = VER;
-    int rowsize  = (W * 3 + 3) & ~3;
-    int datasize = rowsize * H;
+/* capture[] (RGB565) -> 24bit BMP, device binarization rule. */
+static void write_mono_bmp(const char *path) {
+    int W = HOR, H = VER, rowsize = (W * 3 + 3) & ~3, datasize = rowsize * H;
     int filesize = 54 + datasize;
-
     uint8_t hdr[54] = {0};
-    hdr[0] = 'B'; hdr[1] = 'M';
-    hdr[2]  = filesize; hdr[3] = filesize >> 8; hdr[4] = filesize >> 16; hdr[5] = filesize >> 24;
-    hdr[10] = 54;                 /* 픽셀 데이터 오프셋 */
-    hdr[14] = 40;                 /* DIB 헤더 크기 */
-    hdr[18] = W; hdr[19] = W >> 8; hdr[20] = W >> 16; hdr[21] = W >> 24;
-    hdr[22] = H; hdr[23] = H >> 8; hdr[24] = H >> 16; hdr[25] = H >> 24;
-    hdr[26] = 1;                  /* planes */
-    hdr[28] = 24;                 /* bpp */
-    hdr[34] = datasize; hdr[35] = datasize >> 8; hdr[36] = datasize >> 16; hdr[37] = datasize >> 24;
-
+    hdr[0]='B'; hdr[1]='M';
+    hdr[2]=filesize; hdr[3]=filesize>>8; hdr[4]=filesize>>16; hdr[5]=filesize>>24;
+    hdr[10]=54; hdr[14]=40;
+    hdr[18]=W; hdr[19]=W>>8; hdr[22]=H; hdr[23]=H>>8;
+    hdr[26]=1; hdr[28]=24;
+    hdr[34]=datasize; hdr[35]=datasize>>8; hdr[36]=datasize>>16; hdr[37]=datasize>>24;
     FILE *f = fopen(path, "wb");
     if (!f) { printf("cannot open %s\n", path); return; }
     fwrite(hdr, 1, 54, f);
-
-    uint8_t *row = (uint8_t *)calloc(1, rowsize);
-    for (int y = H - 1; y >= 0; y--) {          /* BMP는 bottom-up */
+    uint8_t *row = calloc(1, rowsize);
+    if (!row) { fclose(f); return; }
+    for (int y = H - 1; y >= 0; y--) {
         for (int x = 0; x < W; x++) {
             uint16_t p = capture[y * W + x];
-            uint8_t  v = (p < 0x7FFF) ? 0 : 255; /* 디바이스 규칙 그대로 */
-            row[x * 3 + 0] = v;                  /* B */
-            row[x * 3 + 1] = v;                  /* G */
-            row[x * 3 + 2] = v;                  /* R */
+            uint8_t v = (p < 0x7FFF) ? 0 : 255;
+            row[x*3]=v; row[x*3+1]=v; row[x*3+2]=v;
         }
         fwrite(row, 1, rowsize, f);
     }
-    free(row);
-    fclose(f);
+    free(row); fclose(f);
 }
 
-int main(int argc, char **argv)
-{
-    const char *outdir = (argc > 1) ? argv[1] : "/tmp";
+/* Synthetic intraday walk so the chart renders when Yahoo blocks this IP. */
+static void synth_series(stock_series_t *s, const char *sym, double anchor, double prev) {
+    memset(s, 0, sizeof(*s));
+    strncpy(s->symbol, sym, sizeof(s->symbol) - 1);
+    strncpy(s->currency, "USD", sizeof(s->currency) - 1);
+    s->prev_close = prev > 0 ? prev : anchor;
+    s->gmtoffset  = -14400;            /* US Eastern (DST) -> realistic x-axis */
+    s->t_start    = 1718371800;        /* ~09:30 exchange-local */
+    int n = 54;                        /* partial session: line ends mid-day (~13:55) */
+    double mn = 1e18, mx = -1e18;
+    for (int i = 0; i < n; i++) {
+        double v = anchor * (1.0 + 0.012 * sin(i * 0.28) + 0.005 * sin(i * 1.7 + 1.0)
+                                 - 0.010 * (i / (double)n));
+        s->close[i] = (float)v;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+    }
+    s->count    = n;
+    s->t_end    = s->t_start + (int64_t)(n - 1) * 300;
+    s->day_min  = mn;
+    s->day_max  = mx;
+    s->day_high = mx + (mx - mn) * 0.05;   /* true intraday H/L sit just outside closes */
+    s->day_low  = mn - (mx - mn) * 0.05;
+    s->valid    = true;
+}
+
+int main(int argc, char **argv) {
+    const char *outdir = (argc > 1) ? argv[1] : "shots";
+    const char *symbol = getenv("STOCK_SYMBOL"); if (!symbol || !*symbol) symbol = "AAPL";
+    const char *key    = getenv("FINNHUB_KEY");   if (!key) key = "";
 
     lv_init();
     lv_tick_set_cb(tick_cb);
-
     lv_display_t *disp = lv_display_create(HOR, VER);
     lv_display_set_flush_cb(disp, flush_cb);
     lv_display_set_buffers(disp, fb, NULL, sizeof(fb), LV_DISPLAY_RENDER_MODE_FULL);
 
-    static lv_ui ui;
-    setup_ui(&ui);
-    lv_screen_load(ui.screen);
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_screen_load(scr);
+    ui_stock_create(scr);
 
-    char path[600];
+    printf("fetching %s (finnhub key %s) ...\n", symbol, *key ? "set" : "MISSING");
+    stock_data_t data;
+    int ok = stock_service_fetch(symbol, key, &data);
+    printf("endpoints ok=%d/4  quote=%d series=%d metrics=%d news=%d\n",
+           ok, data.quote.valid, data.series.valid, data.metrics.valid, data.news.valid);
+    if (data.quote.valid)
+        printf("  price=%.2f change=%+.2f (%+.2f%%)\n",
+               data.quote.price, data.quote.change, data.quote.percent);
+    if (data.news.valid && data.news.count > 0)
+        printf("  top headline: %s\n", data.news.items[0].headline);
 
-    /* 프레임 1: screen_img_1 표시 */
-    lv_obj_clear_flag(ui.screen_img_1, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(ui.screen_img_2, LV_OBJ_FLAG_HIDDEN);
-    captured = 0;
-    run_refresh(10);
-    snprintf(path, sizeof(path), "%s/sim_frame1.bmp", outdir);
-    write_mono_bmp(path);
-    printf("wrote %s (captured=%d)\n", path, captured);
+    if (!data.series.valid) {
+        printf("  [chart] Yahoo unreachable from this host -> SYNTHETIC series\n");
+        synth_series(&data.series, symbol,
+                     data.quote.valid ? data.quote.price : 100.0,
+                     data.quote.valid ? data.quote.prev_close : 100.0);
+    }
 
-    /* 프레임 2: screen_img_2 표시 */
-    lv_obj_clear_flag(ui.screen_img_2, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(ui.screen_img_1, LV_OBJ_FLAG_HIDDEN);
-    captured = 0;
-    run_refresh(10);
-    snprintf(path, sizeof(path), "%s/sim_frame2.bmp", outdir);
-    write_mono_bmp(path);
-    printf("wrote %s (captured=%d)\n", path, captured);
+    ui_stock_update(&data);
 
+    char path[640];
+    for (int p = 0; p < UI_STOCK_PAGE_COUNT; p++) {
+        ui_stock_show_page(p);
+        run_refresh(16);
+        snprintf(path, sizeof(path), "%s/sim_page%d.bmp", outdir, p);
+        write_mono_bmp(path);
+        printf("wrote %s\n", path);
+    }
     return 0;
 }

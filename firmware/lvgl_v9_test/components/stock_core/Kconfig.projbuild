@@ -1,0 +1,43 @@
+menu "Stock Monitor"
+
+config STOCK_SYMBOL
+    string "Ticker symbol"
+    default "AAPL"
+    help
+      The stock ticker to display, e.g. AAPL, MSFT, TSLA, NVDA.
+
+config STOCK_FINNHUB_API_KEY
+    string "Finnhub API key"
+    default ""
+    help
+      Free key from https://finnhub.io. Used for quote, fundamentals and
+      news. Stored per-developer in your local sdkconfig — do NOT commit a
+      real key. Leave empty to disable the Finnhub-backed screens.
+
+config STOCK_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+    help
+      2.4GHz network the board joins on boot. (WiFi provisioning is left for
+      you to customize; this is a simple Kconfig-driven station connect.)
+
+config STOCK_WIFI_PASSWORD
+    string "WiFi password"
+    default ""
+
+config STOCK_ROTATE_SECONDS
+    int "Screen rotate interval (seconds)"
+    default 3
+    range 1 60
+    help
+      How often the bottom area cycles chart -> news -> metrics.
+
+config STOCK_REFRESH_SECONDS
+    int "Data refresh interval (seconds)"
+    default 30
+    range 10 600
+    help
+      How often data is re-fetched. Keep >= 10s to respect free-tier API
+      rate limits; the screen still rotates every ROTATE_SECONDS from cache.
+
+endmenu

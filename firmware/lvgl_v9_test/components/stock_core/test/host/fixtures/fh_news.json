@@ -1,0 +1,7 @@
+[
+  {"category":"company","datetime":1781365360,"headline":"Wall Street's Top Billionaires Are Changing Their Mind About Apple (AAPL)","id":1001,"related":"AAPL","source":"Yahoo","summary":"Hedge funds trimmed positions last quarter.","url":"https://example.com/1"},
+  {"category":"company","datetime":1781365357,"headline":"Taiwan Semiconductor is This Famous Billionaire's Biggest AI Stock Holding","id":1002,"related":"AAPL","source":"Yahoo","summary":"TSM remains a top pick.","url":"https://example.com/2"},
+  {"category":"company","datetime":1781362091,"headline":"SpaceX's Nasdaq Debut Puts Bitcoin On 25% Of Mag8 Balance Sheets","id":1003,"related":"AAPL","source":"Bloomberg","summary":"Crypto exposure rising.","url":"https://example.com/3"},
+  {"category":"company","datetime":1781360820,"headline":"Apple Is Mostly Sitting Out the AI Spending Arms Race","id":1004,"related":"AAPL","source":"Barrons","summary":"Capex discipline in focus.","url":"https://example.com/4"},
+  {"category":"company","datetime":1781349900,"headline":"Should I Update iOS 27 Right Now Or Wait For The Point Release: A Very Long Headline That Comfortably Exceeds The On-Screen Buffer Limit To Prove Truncation Works Safely","id":1005,"related":"AAPL","source":"MacRumors","summary":"Upgrade guidance.","url":"https://example.com/5"}
+]

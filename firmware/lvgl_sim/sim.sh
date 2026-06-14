@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# LVGL 시뮬레이터: 빌드 → 실행 → PNG 스크린샷
-# 사용법: ./sim.sh
+# LVGL simulator: build -> fetch live data -> render -> PNG screenshots.
+# Usage:  FINNHUB_KEY=xxxx STOCK_SYMBOL=AAPL ./sim.sh
 set -e
 cd "$(dirname "$0")"
 
@@ -9,7 +9,7 @@ cmake --build build -j8
 
 mkdir -p shots
 ./build/sim shots
-for n in 1 2; do
-  sips -s format png "shots/sim_frame${n}.bmp" --out "shots/sim_frame${n}.png" >/dev/null
+for n in 0 1 2; do
+  sips -s format png "shots/sim_page${n}.bmp" --out "shots/sim_page${n}.png" >/dev/null
 done
-echo "스크린샷: shots/sim_frame1.png, shots/sim_frame2.png"
+echo "screenshots: shots/sim_page0.png (chart)  sim_page1.png (news)  sim_page2.png (metrics)"

@@ -1,0 +1,17 @@
+{
+  "metric": {
+    "peNormalizedAnnual": 38.0998,
+    "peTTM": 34.8159,
+    "epsTTM": 8.2666,
+    "epsNormalizedAnnual": 7.465,
+    "marketCapitalization": 4267558.5,
+    "52WeekHigh": 317.4,
+    "52WeekLow": 195.07,
+    "dividendYieldIndicatedAnnual": 0.3653215167608159,
+    "beta": 1.1023339,
+    "currentRatioAnnual": 0.8933,
+    "10DayAverageTradingVolume": 53.66095
+  },
+  "metricType": "all",
+  "symbol": "AAPL"
+}
