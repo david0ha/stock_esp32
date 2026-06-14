@@ -6,7 +6,7 @@ set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$DIR/.." && pwd)
 
-PURE_SRCS="$ROOT/prov_config.c $ROOT/form_parse.c $ROOT/json_build.c"
+PURE_SRCS="$ROOT/prov_config.c $ROOT/form_parse.c"
 TEST_SRCS="$DIR/tf_main.c $DIR"/test_*.c
 
 # shellcheck disable=SC2086

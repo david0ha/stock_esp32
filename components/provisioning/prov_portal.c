@@ -10,7 +10,6 @@
 
 #include "prov_wifi.h"
 #include "form_parse.h"
-#include "json_build.h"
 
 static const char *TAG = "prov_portal";
 
@@ -184,59 +183,6 @@ static esp_err_t send_result_page(httpd_req_t *req, const char *title, const cha
     return ESP_OK;
 }
 
-static esp_err_t scan_get(httpd_req_t *req)
-{
-    static prov_ap_t aps[24];
-    no_keepalive(req);
-    // Serve the background-scan cache; scanning live here would drop the connected client.
-    size_t count = prov_wifi_scan_cached(aps, sizeof(aps) / sizeof(aps[0]));
-    ESP_LOGI(TAG, "/scan -> %u network(s)", (unsigned)count);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr_chunk(req, "{\"networks\":[");
-    for (size_t i = 0; i < count; i++) {
-        char esc[PROV_JSON_ESCAPE_BUFSZ(sizeof(aps[0].ssid))];
-        if (prov_json_escape(aps[i].ssid, esc, sizeof(esc)) < 0) {
-            ESP_LOGW(TAG, "skipped SSID that overflowed JSON escape buffer");
-            continue;
-        }
-        char obj[256];
-        snprintf(obj, sizeof(obj), "%s{\"ssid\":\"%s\",\"rssi\":%d,\"secure\":%s}",
-                 i == 0 ? "" : ",", esc, aps[i].rssi, aps[i].secure ? "true" : "false");
-        httpd_resp_sendstr_chunk(req, obj);
-    }
-    httpd_resp_sendstr_chunk(req, "]}");
-    httpd_resp_sendstr_chunk(req, NULL);  // end response
-    return ESP_OK;
-}
-
-static esp_err_t state_get(httpd_req_t *req)
-{
-    ESP_LOGI(TAG, "GET /state");
-    no_keepalive(req);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr_chunk(req, "{\"ssid\":\"");
-    if (s_have_current) {
-        char esc[PROV_JSON_ESCAPE_BUFSZ(sizeof(s_current.ssid))];
-        if (prov_json_escape(s_current.ssid, esc, sizeof(esc)) >= 0) {
-            httpd_resp_sendstr_chunk(req, esc);
-        }
-    }
-    httpd_resp_sendstr_chunk(req, "\",\"tickers\":[");
-    for (size_t i = 0; s_have_current && i < s_current.ticker_count; i++) {
-        char esc[PROV_JSON_ESCAPE_BUFSZ(sizeof(s_current.tickers[0]))];
-        if (prov_json_escape(s_current.tickers[i], esc, sizeof(esc)) < 0) {
-            continue;
-        }
-        char obj[sizeof(esc) + 4];  // esc + leading comma + two quotes + NUL
-        snprintf(obj, sizeof(obj), "%s\"%s\"", i == 0 ? "" : ",", esc);
-        httpd_resp_sendstr_chunk(req, obj);
-    }
-    httpd_resp_sendstr_chunk(req, "]}");
-    httpd_resp_sendstr_chunk(req, NULL);
-    return ESP_OK;
-}
-
 static esp_err_t save_post(httpd_req_t *req)
 {
     char body[1024];
@@ -345,10 +291,8 @@ static void start_http(void)
     }
 
     const httpd_uri_t routes[] = {
-        {.uri = "/",      .method = HTTP_GET,  .handler = index_get},
-        {.uri = "/scan",  .method = HTTP_GET,  .handler = scan_get},
-        {.uri = "/state", .method = HTTP_GET,  .handler = state_get},
-        {.uri = "/save",  .method = HTTP_POST, .handler = save_post},
+        {.uri = "/",     .method = HTTP_GET,  .handler = index_get},
+        {.uri = "/save", .method = HTTP_POST, .handler = save_post},
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);
