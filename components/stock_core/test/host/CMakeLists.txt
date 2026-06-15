@@ -31,5 +31,26 @@ if(SANITIZE)
     target_link_options(test_parse PRIVATE -fsanitize=address,undefined)
 endif()
 
+# stock_service tests: link a fake http_get (defined in test_service.c) so the
+# service layer is exercised on the host with no network.
+add_executable(test_service
+    test_service.c
+    ${CORE}/stock_service.c
+    ${CORE}/stock_parse.c
+    ${CJSON}/cJSON.c)
+
+target_include_directories(test_service PRIVATE
+    ${CORE}/include
+    ${CJSON})
+
+target_compile_options(test_service PRIVATE -Wall -Wextra -O0 -g)
+target_link_libraries(test_service m)
+
+if(SANITIZE)
+    target_compile_options(test_service PRIVATE -fsanitize=address,undefined)
+    target_link_options(test_service PRIVATE -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_test(NAME parse COMMAND test_parse)
+add_test(NAME service COMMAND test_service)
