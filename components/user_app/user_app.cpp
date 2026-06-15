@@ -28,10 +28,15 @@
 #include "sdkconfig.h"
 #include "cJSON.h"
 
+#include <time.h>
+
 #include "user_app.h"      /* prov_config_t */
 #include "lvgl_bsp.h"      /* Lvgl_lock / Lvgl_unlock */
 #include "ui_stock.h"
+#include "ui_econ.h"       /* economic-calendar overlay */
 #include "stock_service.h"
+#include "econ_service.h"  /* FMP economic calendar */
+#include "econ_parse.h"    /* econ_week_range for the loading label */
 #include "buttons.h"       /* USER/BOOT button events */
 #include "board_io.h"      /* SHTC3 / RTC / battery */
 
@@ -75,6 +80,14 @@ static prov_config_t s_cfg;
  * spin the SHTC3/ADC for a display that can't change faster than once a minute. */
 #define HOME_TICK_SECONDS 15
 
+/* Pressing KEY (USER) + BOOT together toggles the economic-calendar view. The
+ * two GPIOs fire independent edge events, so on the first event we wait this
+ * brief settle for the second finger to land, then sample the real pin state
+ * (buttons_both_pressed). Sampling GPIO rather than event timing means an
+ * ordinary single press is handled immediately and two quick *separate* presses
+ * are never mistaken for a chord. */
+#define CHORD_SETTLE_MS 60
+
 static QueueHandle_t     s_btn_queue;     /* USER/BOOT presses */
 static SemaphoreHandle_t s_mtx;
 static SemaphoreHandle_t s_fetch_wake;
@@ -90,6 +103,14 @@ static size_t        s_ticker_n = 1;                /* watchlist length (>=1)   
 
 static int s_sym_index;   /* which ticker is on screen                       */
 static int s_page;        /* 0=home, 1=chart, 2=news, 3=metrics (starts home) */
+
+/* Economic-calendar overlay state. s_econ_mode / s_econ_week are guarded by
+ * s_mtx (read cross-task by FetchTask). s_econ itself is only ever touched by
+ * StockTask — written by render_econ, read synchronously into LVGL right after —
+ * so it needs no lock; keep it that way (don't read s_econ from another task). */
+static bool            s_econ_mode;   /* calendar overlay shown instead of stock */
+static int             s_econ_week;   /* 0 = this week, -1 = previous, +1 = next  */
+static econ_calendar_t s_econ;        /* last fetched week (BSS, ~1.4KB)          */
 
 /* Human-readable names for the ui_stock pages, for logging. */
 static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "HOME", "CHART", "NEWS", "METRICS" };
@@ -117,6 +138,7 @@ void UserApp_UiInit(void) {
     lv_screen_load(s_screen);
     if (prev && prev != s_screen) lv_obj_delete(prev);
     ui_stock_create(s_screen);
+    ui_econ_create(s_screen);   /* hidden overlay; shown on the KEY+BOOT chord */
 }
 
 /* Sample the on-board sensors into `env` for the home page + battery chip. */
@@ -236,21 +258,99 @@ static void FetchTask(void *arg) {
         s_busy[idx] = false;
         double px = s_cache[idx].quote.price, pct = s_cache[idx].quote.percent;
         bool is_current = (idx == s_sym_index);
+        bool econ_up    = s_econ_mode;   /* don't paint stock under the overlay */
         state_unlock();
 
         ESP_LOGI(TAG, "[w%d] %-5s %s ok=%d  price=%.2f (%+.2f%%)  %s",
                  wid, full ? "full" : "quote", sym, ok, px, pct,
                  is_current ? "[on screen]" : "[cached]");
 
-        if (is_current && stored) render_current();
+        if (is_current && stored && !econ_up) render_current();
+    }
+}
+
+/* Fetch + paint the economic calendar for the current s_econ_week. Runs in the
+ * UI task (StockTask), so that task carries a big stack for the TLS handshake +
+ * JSON parse. Paints a "Loading..." frame first, then the events or the error
+ * message. The TLS connection to FMP is reused across week navigations. */
+static void render_econ(void) {
+    time_t now = time(NULL);
+    long   tz  = econ_local_tz_off(now);
+    state_lock();
+    int wk = s_econ_week;
+    state_unlock();
+
+    char from[12], to[12], label[ECON_LABEL_MAXLEN];
+    econ_week_range(now, tz, wk, from, sizeof from, to, sizeof to, label, sizeof label);
+    if (Lvgl_lock(-1)) { ui_econ_set_loading(label); Lvgl_unlock(); }
+
+    econ_service_fetch(CONFIG_STOCK_FMP_API_KEY, now, tz, wk,
+                       CONFIG_STOCK_ECON_MIN_IMPACT, &s_econ);
+    ESP_LOGI(TAG, "econ wk=%d [%s] valid=%d count=%d/%d %s", wk, s_econ.week_label,
+             s_econ.valid, s_econ.count, s_econ.total_matched,
+             s_econ.valid ? "" : s_econ.error);
+    if (Lvgl_lock(-1)) { ui_econ_set_calendar(&s_econ); Lvgl_unlock(); }
+}
+
+/* Toggle between the stock view and the economic-calendar overlay (KEY+BOOT). */
+static void toggle_econ(void) {
+    state_lock();
+    s_econ_mode = !s_econ_mode;
+    bool entering = s_econ_mode;
+    if (entering) s_econ_week = 0;     /* always (re)enter on the current week */
+    state_unlock();
+
+    ESP_LOGI(TAG, "KEY+BOOT -> %s", entering ? "economic calendar" : "stock view");
+    if (entering) {
+        if (Lvgl_lock(-1)) { ui_econ_show(true); Lvgl_unlock(); }
+        render_econ();
+    } else {
+        if (Lvgl_lock(-1)) { ui_econ_show(false); Lvgl_unlock(); }
+        render_current();
+    }
+}
+
+/* Handle one (non-chord) button press, dispatched by the active view. */
+static void handle_press(button_id_t id, int64_t refresh_us) {
+    if (s_econ_mode) {                 /* calendar: KEY = prev week, BOOT = next */
+        state_lock();
+        s_econ_week += (id == BUTTON_USER) ? -1 : +1;
+        state_unlock();
+        render_econ();
+        return;
+    }
+
+    if (id == BUTTON_USER) {           /* next ticker, same view */
+        state_lock();
+        s_sym_index = (s_sym_index + 1) % (int)s_ticker_n;
+        int     idx   = s_sym_index;
+        int64_t now   = esp_timer_get_time();
+        bool    stale = !s_valid[idx] || (now - s_time_us[idx] > refresh_us);
+        state_unlock();
+
+        ESP_LOGI(TAG, "USER -> ticker %d/%u %s", idx + 1, (unsigned)s_ticker_n,
+                 stale ? "(fetching)" : "(cached, instant)");
+        render_current();              /* instant */
+        if (stale) request_fetch(idx);
+    } else {                           /* BOOT: next view, same ticker (no network) */
+        state_lock();
+        s_page = (s_page + 1) % UI_STOCK_PAGE_COUNT;
+        int page = s_page;
+        state_unlock();
+
+        ESP_LOGI(TAG, "BOOT -> view %s (%d/%d)", kPageName[page],
+                 page + 1, UI_STOCK_PAGE_COUNT);
+        render_current();              /* instant */
     }
 }
 
 /*
- * StockTask — input + render only (small stack, higher priority). Never blocks
- * on the network, so button presses are handled the instant they arrive:
+ * StockTask — input + render only (higher priority), but it also performs the
+ * economic-calendar fetch inline, so it carries a big stack (TLS + JSON). Button
+ * presses are handled the instant they arrive:
  *   USER (GPIO18) -> next ticker; paints cached data now, fetches only if stale
  *   BOOT (GPIO0)  -> next view (home/chart/news/metrics), pure local page swap
+ *   USER+BOOT     -> toggle the economic-calendar overlay (in it: prev/next week)
  * Between presses it wakes every HOME_TICK_SECONDS to keep the home clock and
  * battery chip live, and kicks a background refresh of the on-screen ticker on
  * the (slower) REFRESH cadence.
@@ -281,29 +381,21 @@ static void StockTask(void *arg) {
     for (;;) {
         button_event_t ev;
         if (xQueueReceive(s_btn_queue, &ev, pdMS_TO_TICKS(HOME_TICK_SECONDS * 1000)) == pdTRUE) {
-            if (ev.id == BUTTON_USER) {        /* next ticker, same view */
-                state_lock();
-                s_sym_index = (s_sym_index + 1) % (int)s_ticker_n;
-                int     idx   = s_sym_index;
-                int64_t now   = esp_timer_get_time();
-                bool    stale = !s_valid[idx] || (now - s_time_us[idx] > refresh_us);
-                state_unlock();
-
-                ESP_LOGI(TAG, "USER -> ticker %d/%u %s", idx + 1, (unsigned)s_ticker_n,
-                         stale ? "(fetching)" : "(cached, instant)");
-                render_current();              /* instant */
-                if (stale) request_fetch(idx);
-            } else if (ev.id == BUTTON_BOOT) { /* next view, same ticker (no network) */
-                state_lock();
-                s_page = (s_page + 1) % UI_STOCK_PAGE_COUNT;
-                int page = s_page;
-                state_unlock();
-
-                ESP_LOGI(TAG, "BOOT -> view %s (%d/%d)", kPageName[page],
-                         page + 1, UI_STOCK_PAGE_COUNT);
-                render_current();              /* instant */
+            /* Let a possible second finger land, then read the real pin state:
+             * both held == KEY+BOOT chord (toggle the calendar); otherwise it's
+             * a single press. */
+            vTaskDelay(pdMS_TO_TICKS(CHORD_SETTLE_MS));
+            if (buttons_both_pressed()) {
+                button_event_t drop;   /* discard the partner edge(s) of the chord */
+                while (xQueueReceive(s_btn_queue, &drop, 0) == pdTRUE) { }
+                toggle_econ();
+            } else {
+                handle_press(ev.id, refresh_us);
             }
         } else {
+            /* Calendar view is static between presses — skip the home/network tick. */
+            if (s_econ_mode) continue;
+
             /* Idle tick: keep the home clock + sensors current (cheap, local). */
             tick_home_env();
 
@@ -347,6 +439,8 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
         snprintf(name, sizeof(name), "fetch%d", i);
         xTaskCreatePinnedToCore(FetchTask, name, 16 * 1024, (void *)(intptr_t)i, 3, NULL, 1);
     }
-    /* StockTask: input/render only -> small stack, higher prio for snappy buttons. */
-    xTaskCreatePinnedToCore(StockTask, "ui", 4 * 1024, NULL, 4, NULL, 1);
+    /* StockTask: input/render + inline economic-calendar fetch, so it needs a big
+     * stack (TLS handshake + JSON parse) like the fetch workers. Higher prio so
+     * button presses stay snappy. */
+    xTaskCreatePinnedToCore(StockTask, "ui", 16 * 1024, NULL, 4, NULL, 1);
 }
