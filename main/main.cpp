@@ -1,5 +1,7 @@
 
 #include <stdio.h>
+#include <time.h>
+#include <sys/time.h>
 #include <freertos/FreeRTOS.h>
 #include <esp_timer.h>
 #include <esp_log.h>
@@ -10,6 +12,8 @@
 #include "user_config.h"
 #include "provisioning.h"
 #include "net_time.h"
+#include "board_io.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "main";
 
@@ -107,9 +111,30 @@ static void OnProvisioningEvent(prov_event_t event, const char *info, void *user
 	}
 }
 
+// Seed the system clock from the battery-backed RTC (UTC) so the home screen
+// shows the right time immediately — before WiFi/SNTP, and across brief power loss.
+static void SeedClockFromRtc(void)
+{
+	struct tm utc;
+	if (board_io_rtc_get(&utc)) {
+		time_t t = timegm(&utc);
+		struct timeval tv = { .tv_sec = t, .tv_usec = 0 };
+		settimeofday(&tv, NULL);
+		ESP_LOGI(TAG, "clock seeded from RTC");
+	}
+}
+
 extern "C" void app_main(void)
 {
 	UserApp_AppInit();
+
+	// Local timezone for the home-screen clock (POSIX TZ string, e.g. "KST-9").
+	setenv("TZ", CONFIG_STOCK_TIMEZONE, 1);
+	tzset();
+
+	board_io_init();        // I2C bus + SHTC3 + RTC + battery ADC
+	SeedClockFromRtc();
+
 	RlcdPort.RLCD_Init();
 	Lvgl_PortInit(400,300,Lvgl_FlushCallback);
 
@@ -128,6 +153,13 @@ extern "C" void app_main(void)
 	if (connected) {
 		ESP_LOGI(TAG, "online — %u ticker(s) saved", (unsigned)cfg.ticker_count);
 		net_time_sync(10000);   // now online -> set the clock (news window, chart labels)
+		// Persist the accurate time into the RTC so the clock survives reboots/power loss.
+		time_t now = time(NULL);
+		if (now > 1700000000) {  // sane epoch -> SNTP succeeded
+			struct tm utc;
+			gmtime_r(&now, &utc);
+			board_io_rtc_set(&utc);
+		}
 		// Hand off to the stock UI; the fetch task cycles through cfg's watchlist.
 		if (Lvgl_lock(-1)) {
 			UserApp_UiInit();
