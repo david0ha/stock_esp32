@@ -3,12 +3,14 @@
  *
  *   AppInit:  route cJSON allocations to PSRAM.
  *   UiInit:   build the LVGL stock UI on a fresh screen.
- *   TaskInit: spawn the task that fetches data and rotates the 3 pages,
- *             cycling through the provisioned watchlist of tickers.
+ *   TaskInit: spawn the input/render task + parallel fetch workers. Navigation
+ *             is button-driven: USER cycles the watchlist, BOOT cycles the
+ *             home / chart / news / metrics views of the current ticker.
  *
  * WiFi bring-up, NVS, and the post-connect clock sync are owned by the
- * `provisioning` component; by the time TaskInit runs the network is up and the
- * clock is set, so this task is a pure fetch/render loop.
+ * `provisioning` component; on-board sensors (SHTC3 / RTC / battery) by
+ * `board_io`. By the time TaskInit runs the network is up and the clock is set,
+ * so the render loop just paints from cache and ticks the home clock/weather.
  *
  * The portable core (parsers, service, UI) lives in the stock_core component
  * and is the same code verified by the host tests and the desktop simulator.
@@ -31,6 +33,7 @@
 #include "ui_stock.h"
 #include "stock_service.h"
 #include "buttons.h"       /* USER/BOOT button events */
+#include "board_io.h"      /* SHTC3 / RTC / battery */
 
 static const char *TAG = "app";
 static lv_obj_t  *s_screen;
@@ -45,7 +48,7 @@ static prov_config_t s_cfg;
  *   StockTask  — input + render only (small stack, higher prio). Mutates the
  *                nav state and paints from the per-ticker cache; never blocks
  *                on the network, so a button press is handled the instant it
- *                arrives.
+ *                arrives. Also ticks the home clock + sensors on a short timer.
  *   FetchTask  — NUM_FETCHERS of them run the slow HTTPS/JSON downloads in
  *                parallel so the whole watchlist warms up quickly.
  *
@@ -65,6 +68,11 @@ static prov_config_t s_cfg;
  * actually moves — so a switch/refresh is one tiny request, not four. */
 #define FULL_REFRESH_SECONDS 300
 
+/* How often the render loop wakes (when idle) to refresh the home clock (HH:MM)
+ * and the temperature/humidity/battery readings. Short enough to keep the clock
+ * honest, long enough not to thrash the reflective panel. */
+#define HOME_TICK_SECONDS 5
+
 static QueueHandle_t     s_btn_queue;     /* USER/BOOT presses */
 static SemaphoreHandle_t s_mtx;
 static SemaphoreHandle_t s_fetch_wake;
@@ -78,11 +86,11 @@ static int64_t       s_time_us[PROV_MAX_TICKERS];   /* last fetch (full or quote
 static int64_t       s_full_us[PROV_MAX_TICKERS];   /* last FULL fetch (0 = never)  */
 static size_t        s_ticker_n = 1;                /* watchlist length (>=1)       */
 
-static int s_sym_index;   /* which ticker is on screen  */
-static int s_page;        /* 0=chart, 1=news, 2=metrics  */
+static int s_sym_index;   /* which ticker is on screen                       */
+static int s_page;        /* 0=home, 1=chart, 2=news, 3=metrics (starts home) */
 
-/* Human-readable names for the 3 ui_stock pages, for logging. */
-static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "CHART", "NEWS", "METRICS" };
+/* Human-readable names for the ui_stock pages, for logging. */
+static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "HOME", "CHART", "NEWS", "METRICS" };
 
 static inline void state_lock(void)   { xSemaphoreTake(s_mtx, portMAX_DELAY); }
 static inline void state_unlock(void) { xSemaphoreGive(s_mtx); }
@@ -107,6 +115,29 @@ void UserApp_UiInit(void) {
     lv_screen_load(s_screen);
     if (prev && prev != s_screen) lv_obj_delete(prev);
     ui_stock_create(s_screen);
+}
+
+/* Sample the on-board sensors into `env` for the home page + battery chip. */
+static void read_env(ui_env_t *env) {
+    float t = 0, h = 0;
+    env->env_valid = board_io_read_env(&t, &h);
+    env->temp_c    = t;
+    env->humidity  = h;
+    env->battery_v   = board_io_battery_voltage();
+    env->battery_pct = board_io_battery_percent();
+    env->battery_valid = env->battery_v > 0.1f;
+}
+
+/* Refresh the home clock + sensors (cheap, local). Ticks the clock via
+ * ui_stock_update_env even on the stock pages so the top-bar battery chip and
+ * the (hidden) home clock are always current when the user navigates back. */
+static void tick_home_env(void) {
+    ui_env_t env;
+    read_env(&env);
+    if (Lvgl_lock(-1)) {
+        ui_stock_update_env(&env);
+        Lvgl_unlock();
+    }
 }
 
 /* Paint the currently selected ticker/page from the cache. Holds s_mtx across
@@ -214,8 +245,10 @@ static void FetchTask(void *arg) {
  * StockTask — input + render only (small stack, higher priority). Never blocks
  * on the network, so button presses are handled the instant they arrive:
  *   USER (GPIO18) -> next ticker; paints cached data now, fetches only if stale
- *   BOOT (GPIO0)  -> next view of the current ticker (pure local page swap)
- * On idle it kicks a background refresh of the on-screen ticker.
+ *   BOOT (GPIO0)  -> next view (home/chart/news/metrics), pure local page swap
+ * Between presses it wakes every HOME_TICK_SECONDS to keep the home clock and
+ * battery chip live, and kicks a background refresh of the on-screen ticker on
+ * the (slower) REFRESH cadence.
  */
 static void StockTask(void *arg) {
     (void)arg;
@@ -233,11 +266,16 @@ static void StockTask(void *arg) {
     state_unlock();
     for (int i = 0; i < NUM_FETCHERS; i++) xSemaphoreGive(s_fetch_wake);
 
-    render_current();   /* blank until the first fetch lands */
+    /* Prime the home page with a real clock + sensor reading, then show it
+     * (page 0 = home). The quote stays blank until the first fetch lands. */
+    tick_home_env();
+    render_current();
+
+    int64_t last_refresh_us = esp_timer_get_time();
 
     for (;;) {
         button_event_t ev;
-        if (xQueueReceive(s_btn_queue, &ev, pdMS_TO_TICKS(refresh * 1000)) == pdTRUE) {
+        if (xQueueReceive(s_btn_queue, &ev, pdMS_TO_TICKS(HOME_TICK_SECONDS * 1000)) == pdTRUE) {
             if (ev.id == BUTTON_USER) {        /* next ticker, same view */
                 state_lock();
                 s_sym_index = (s_sym_index + 1) % (int)s_ticker_n;
@@ -261,12 +299,20 @@ static void StockTask(void *arg) {
                 render_current();              /* instant */
             }
         } else {
-            /* idle: refresh whatever is on screen so prices/news stay live */
-            state_lock();
-            int idx = s_sym_index;
-            state_unlock();
-            ESP_LOGI(TAG, "auto-refresh ticker %d", idx + 1);
-            request_fetch(idx);
+            /* Idle tick: keep the home clock + sensors current (cheap, local). */
+            tick_home_env();
+
+            /* Refresh the on-screen ticker on the slower network cadence so
+             * prices/news stay live without re-downloading every few seconds. */
+            int64_t now = esp_timer_get_time();
+            if (now - last_refresh_us >= refresh_us) {
+                last_refresh_us = now;
+                state_lock();
+                int idx = s_sym_index;
+                state_unlock();
+                ESP_LOGI(TAG, "auto-refresh ticker %d", idx + 1);
+                request_fetch(idx);
+            }
         }
     }
 }

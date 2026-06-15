@@ -9,7 +9,7 @@ cmake --build build -j8
 
 mkdir -p shots
 ./build/sim shots
-for n in 0 1 2; do
+for n in 0 1 2 3; do
   sips -s format png "shots/sim_page${n}.bmp" --out "shots/sim_page${n}.png" >/dev/null
 done
-echo "screenshots: shots/sim_page0.png (chart)  sim_page1.png (news)  sim_page2.png (metrics)"
+echo "screenshots: shots/sim_page0.png (home)  sim_page1.png (chart)  sim_page2.png (news)  sim_page3.png (metrics)"
