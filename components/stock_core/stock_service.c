@@ -34,9 +34,15 @@ int stock_service_fetch_quote(const char *symbol, const char *finnhub_key,
              "https://finnhub.io/api/v1/quote?symbol=%s&token=%s",
              symbol, finnhub_key);
     if ((b = fetch_body(url))) {
-        int rc = stock_parse_quote(b, symbol, &out->quote);
+        /* Parse into a temporary and only overwrite on success: stock_parse_quote
+         * zeroes its output before parsing, so writing &out->quote directly would
+         * blank a previously-good cached quote on a 200-with-garbage body (Finnhub
+         * free-tier rate-limit). Leaving out->quote intact lets the cache survive
+         * a transient bad refresh. */
+        stock_quote_t q;
+        int rc = stock_parse_quote(b, symbol, &q);
         free(b);
-        if (rc == 0) return 1;
+        if (rc == 0) { out->quote = q; return 1; }
     }
     return 0;
 }
