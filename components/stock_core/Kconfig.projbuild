@@ -16,20 +16,14 @@ config STOCK_FINNHUB_API_KEY
       news. Stored per-developer in your local sdkconfig — do NOT commit a
       real key. Leave empty to disable the Finnhub-backed screens.
 
-config STOCK_ROTATE_SECONDS
-    int "Screen rotate interval (seconds)"
-    default 3
-    range 1 60
-    help
-      How often the bottom area cycles chart -> news -> metrics.
-
 config STOCK_REFRESH_SECONDS
     int "Data refresh interval (seconds)"
     default 30
     range 10 600
     help
-      How often data is re-fetched. Keep >= 10s to respect free-tier API
-      rate limits; the screen still rotates every ROTATE_SECONDS from cache.
+      How often the on-screen ticker is re-fetched in the background. Keep
+      >= 10s to respect free-tier API rate limits. Navigation is button-driven
+      (USER = next ticker, BOOT = next view), not timed rotation.
 
 config STOCK_TIMEZONE
     string "Home-screen timezone (POSIX TZ)"

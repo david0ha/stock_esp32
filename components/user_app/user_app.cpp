@@ -68,10 +68,12 @@ static prov_config_t s_cfg;
  * actually moves — so a switch/refresh is one tiny request, not four. */
 #define FULL_REFRESH_SECONDS 300
 
-/* How often the render loop wakes (when idle) to refresh the home clock (HH:MM)
- * and the temperature/humidity/battery readings. Short enough to keep the clock
- * honest, long enough not to thrash the reflective panel. */
-#define HOME_TICK_SECONDS 5
+/* How often the render loop wakes (when idle) to refresh the home clock and the
+ * temperature/humidity/battery readings. The clock shows HH:MM and the sensors
+ * drift slowly, so this only needs to be a fraction of a minute — short enough
+ * to keep the minute honest, long enough not to thrash the reflective panel or
+ * spin the SHTC3/ADC for a display that can't change faster than once a minute. */
+#define HOME_TICK_SECONDS 15
 
 static QueueHandle_t     s_btn_queue;     /* USER/BOOT presses */
 static SemaphoreHandle_t s_mtx;
@@ -210,34 +212,37 @@ static void FetchTask(void *arg) {
         const char *sym = prov_config_ticker_at(&s_cfg, (size_t)idx);
         if (!sym) sym = CONFIG_STOCK_SYMBOL;  /* empty watchlist -> Kconfig default */
 
-        int ok;
-        if (full) {
-            ok = stock_service_fetch(sym, key, scratch);    /* all 4 endpoints */
-        } else {
-            /* Quote-only: start from the cached data so series/metrics/news
-             * survive, then refresh just the realtime quote on top of it. */
-            state_lock();
-            *scratch = s_cache[idx];
-            state_unlock();
-            ok = stock_service_fetch_quote(sym, key, scratch);
-        }
+        /* Download with no lock held. A full fetch fills the whole struct; the
+         * quote-only refresh writes just scratch->quote, and only on success
+         * (stock_service_fetch_quote is transactional), so the other fields of
+         * scratch are never read on the quote path. */
+        int ok = full ? stock_service_fetch(sym, key, scratch)
+                       : stock_service_fetch_quote(sym, key, scratch);
         int64_t now = esp_timer_get_time();
 
         state_lock();
-        s_cache[idx]   = *scratch;
-        s_valid[idx]   = true;
-        s_time_us[idx] = now;
-        if (full) s_full_us[idx] = now;
-        s_busy[idx]    = false;
+        bool stored = false;
+        if (full) {
+            s_cache[idx]   = *scratch;              /* whole struct */
+            s_valid[idx]   = true;
+            s_time_us[idx] = now;
+            s_full_us[idx] = now;
+            stored = true;
+        } else if (ok) {
+            s_cache[idx].quote = scratch->quote;    /* graft just the quote */
+            s_time_us[idx]     = now;
+            stored = true;
+        }   /* a failed quote refresh leaves the cache (and its staleness) intact */
+        s_busy[idx] = false;
+        double px = s_cache[idx].quote.price, pct = s_cache[idx].quote.percent;
         bool is_current = (idx == s_sym_index);
         state_unlock();
 
         ESP_LOGI(TAG, "[w%d] %-5s %s ok=%d  price=%.2f (%+.2f%%)  %s",
-                 wid, full ? "full" : "quote", sym, ok,
-                 scratch->quote.price, scratch->quote.percent,
+                 wid, full ? "full" : "quote", sym, ok, px, pct,
                  is_current ? "[on screen]" : "[cached]");
 
-        if (is_current) render_current();
+        if (is_current && stored) render_current();
     }
 }
 
