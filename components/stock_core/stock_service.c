@@ -23,6 +23,24 @@ static char *fetch_body(const char *url) {
     return NULL;
 }
 
+int stock_service_fetch_quote(const char *symbol, const char *finnhub_key,
+                              stock_data_t *out) {
+    char url[URL_MAX];
+    char *b;
+
+    /* Finnhub quote — price / change / %. Updates out->quote in place; the rest
+     * of `out` (series / metrics / news) is left untouched. */
+    snprintf(url, sizeof(url),
+             "https://finnhub.io/api/v1/quote?symbol=%s&token=%s",
+             symbol, finnhub_key);
+    if ((b = fetch_body(url))) {
+        int rc = stock_parse_quote(b, symbol, &out->quote);
+        free(b);
+        if (rc == 0) return 1;
+    }
+    return 0;
+}
+
 int stock_service_fetch(const char *symbol, const char *finnhub_key,
                         stock_data_t *out) {
     memset(out, 0, sizeof(*out));
@@ -30,23 +48,12 @@ int stock_service_fetch(const char *symbol, const char *finnhub_key,
     char url[URL_MAX];
     char *b;
 
-    /* Finnhub quote — price / change / % */
-    snprintf(url, sizeof(url),
-             "https://finnhub.io/api/v1/quote?symbol=%s&token=%s",
-             symbol, finnhub_key);
-    if ((b = fetch_body(url))) {
-        if (stock_parse_quote(b, symbol, &out->quote) == 0) ok++;
-        free(b);
-    }
+    /* The three Finnhub requests are issued consecutively (quote, metric, news)
+     * so they share one keep-alive connection — one TLS handshake for all three
+     * — and the single Yahoo request (different host) is fetched last. */
 
-    /* Yahoo v8 chart — intraday 5m line */
-    snprintf(url, sizeof(url),
-             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m",
-             symbol);
-    if ((b = fetch_body(url))) {
-        if (stock_parse_series(b, &out->series) == 0) ok++;
-        free(b);
-    }
+    /* Finnhub quote — price / change / % */
+    ok += stock_service_fetch_quote(symbol, finnhub_key, out);
 
     /* Finnhub metric — fundamentals */
     snprintf(url, sizeof(url),
@@ -75,6 +82,15 @@ int stock_service_fetch(const char *symbol, const char *finnhub_key,
                 free(b);
             }
         }
+    }
+
+    /* Yahoo v8 chart — intraday 5m line (different host, fetched last) */
+    snprintf(url, sizeof(url),
+             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m",
+             symbol);
+    if ((b = fetch_body(url))) {
+        if (stock_parse_series(b, &out->series) == 0) ok++;
+        free(b);
     }
 
     return ok;
