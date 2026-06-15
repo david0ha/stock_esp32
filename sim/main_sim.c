@@ -129,7 +129,29 @@ int main(int argc, char **argv) {
                      data.quote.valid ? data.quote.prev_close : 100.0);
     }
 
+    /* No live quote (no key / offline)? Use the reference-photo sample so the
+     * home card renders with realistic content for design comparison. */
+    if (!data.quote.valid) {
+        memset(&data.quote, 0, sizeof(data.quote));
+        snprintf(data.quote.symbol, sizeof(data.quote.symbol), "%s",
+                 (getenv("FINNHUB_KEY") && *getenv("FINNHUB_KEY")) ? symbol : "PLTR");
+        data.quote.price      = 23.29;
+        data.quote.change     = 0.21;
+        data.quote.percent    = 0.91;
+        data.quote.prev_close = 23.08;
+        data.quote.valid      = true;
+        printf("  [home] using sample quote %s $%.2f (%+.2f%%)\n",
+               data.quote.symbol, data.quote.price, data.quote.percent);
+    }
+
     ui_stock_update(&data);
+
+    /* Sample environment so temp/humidity/battery render on the home card. */
+    ui_env_t env = {
+        .env_valid = true, .temp_c = 23.5f, .humidity = 45.0f,
+        .battery_valid = true, .battery_pct = 84, .battery_v = 4.01f,
+    };
+    ui_stock_update_env(&env);
 
     char path[640];
     for (int p = 0; p < UI_STOCK_PAGE_COUNT; p++) {

@@ -20,6 +20,11 @@ set(CJSON ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cJSON)
 # Reuse the IDF project's LVGL source (fetched into managed_components/).
 add_subdirectory(${EX}/managed_components/lvgl__lvgl ${CMAKE_BINARY_DIR}/lvgl)
 
+# The home page is a swappable unit: override -DHOME_SRC=/path/to/ui_home_vN.c to
+# A/B competing layouts against the reference photo without touching anything else.
+set(HOME_SRC ${CORE}/ui_home.c CACHE FILEPATH "home page implementation")
+message(STATUS "sim HOME_SRC = ${HOME_SRC}")
+
 # The shared stock core is compiled verbatim; only the HTTP port is host-specific.
 add_executable(sim
     main_sim.c
@@ -27,6 +32,9 @@ add_executable(sim
     ${CORE}/stock_parse.c
     ${CORE}/stock_service.c
     ${CORE}/ui_stock.c
+    ${HOME_SRC}
+    ${CORE}/ui_font_black_50.c
+    ${CORE}/ui_font_black_26.c
     ${CJSON}/cJSON.c)
 
 target_include_directories(sim PRIVATE ${CORE}/include ${CJSON})

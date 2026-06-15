@@ -8,6 +8,7 @@
  *     works in int32.
  */
 #include "ui_stock.h"
+#include "ui_home.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -29,9 +30,11 @@ static const lv_color_t BLACK = LV_COLOR_MAKE(0, 0, 0);
 static const lv_color_t WHITE = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 
 static struct {
+    lv_obj_t          *topbar;         /* container: hidden on the home page */
     lv_obj_t          *lbl_symbol;
     lv_obj_t          *lbl_price;
     lv_obj_t          *lbl_change;     /* black pill badge */
+    lv_obj_t          *lbl_batt;       /* small battery chip in the top bar */
     lv_obj_t          *page[UI_STOCK_PAGE_COUNT];
     lv_obj_t          *chart;
     lv_chart_series_t *series;
@@ -108,17 +111,20 @@ static void fmt_date(char *buf, size_t n, int64_t epoch, int32_t off) {
 /* ---- top bar ------------------------------------------------------------ */
 
 static void build_top_bar(lv_obj_t *parent) {
-    S.lbl_symbol = mk_label(parent, &lv_font_montserrat_28);
+    /* container so the whole bar can be hidden on the (full-screen) home page */
+    S.topbar = mk_panel(parent, 0, 0, SCR_W, BAR_H + 2);
+
+    S.lbl_symbol = mk_label(S.topbar, &lv_font_montserrat_28);
     lv_label_set_text(S.lbl_symbol, "----");
     lv_obj_align(S.lbl_symbol, LV_ALIGN_TOP_LEFT, 10, 6);
 
-    S.lbl_price = mk_label(parent, &lv_font_montserrat_28);
+    S.lbl_price = mk_label(S.topbar, &lv_font_montserrat_28);
     lv_label_set_text(S.lbl_price, "--");
     lv_obj_align(S.lbl_price, LV_ALIGN_TOP_RIGHT, -10, 6);
 
     /* change-% as a filled black pill with white text — the one element that
      * must pop, achieved without color. */
-    S.lbl_change = lv_label_create(parent);
+    S.lbl_change = lv_label_create(S.topbar);
     lv_obj_set_style_text_font(S.lbl_change, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(S.lbl_change, WHITE, 0);
     lv_obj_set_style_bg_opa(S.lbl_change, 255, 0);
@@ -129,11 +135,16 @@ static void build_top_bar(lv_obj_t *parent) {
     lv_label_set_text(S.lbl_change, "--");
     lv_obj_align(S.lbl_change, LV_ALIGN_TOP_RIGHT, -10, 40);
 
+    /* small battery chip, tucked under the symbol so it shows on every page */
+    S.lbl_batt = mk_label(S.topbar, &lv_font_montserrat_14);
+    lv_label_set_text(S.lbl_batt, LV_SYMBOL_BATTERY_EMPTY " --");
+    lv_obj_align(S.lbl_batt, LV_ALIGN_TOP_LEFT, 12, 42);
+
     /* divider under the bar */
     static lv_point_precise_t line_pts[2];
     line_pts[0].x = 0;      line_pts[0].y = BAR_H;
     line_pts[1].x = SCR_W;  line_pts[1].y = BAR_H;
-    lv_obj_t *line = lv_line_create(parent);
+    lv_obj_t *line = lv_line_create(S.topbar);
     lv_line_set_points(line, line_pts, 2);
     lv_obj_set_style_line_width(line, 2, 0);
     lv_obj_set_style_line_color(line, BLACK, 0);
@@ -339,15 +350,21 @@ void ui_stock_create(lv_obj_t *parent) {
 
     build_top_bar(parent);
 
-    for (int i = 0; i < UI_STOCK_PAGE_COUNT; i++) {
+    /* Home (page 0) is a full-screen bold card; the stock pages live in the body
+     * region below the top bar. */
+    S.page[0] = mk_panel(parent, 0, 0, SCR_W, SCR_H);
+    for (int i = 1; i < UI_STOCK_PAGE_COUNT; i++) {
         S.page[i] = mk_panel(parent, 0, PAGE_Y, SCR_W, PAGE_H);
-        if (i != 0) lv_obj_add_flag(S.page[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(S.page[i], LV_OBJ_FLAG_HIDDEN);
     }
-    build_chart_page(S.page[0]);
-    build_news_page(S.page[1]);
-    build_metrics_page(S.page[2]);
+    ui_home_create(S.page[0]);     /* primary page */
+    build_chart_page(S.page[1]);
+    build_news_page(S.page[2]);
+    build_metrics_page(S.page[3]);
     build_dots(parent);
 
+    /* start on home -> top bar hidden (the home card shows its own stock line) */
+    lv_obj_add_flag(S.topbar, LV_OBJ_FLAG_HIDDEN);
     S.cur_page = 0;
     refresh_dots();
 }
@@ -377,13 +394,37 @@ void ui_stock_update(const stock_data_t *d) {
     lv_obj_align(S.lbl_price, LV_ALIGN_TOP_RIGHT, -10, 6);
     lv_obj_align(S.lbl_change, LV_ALIGN_TOP_RIGHT, -10, 40);
 
+    ui_home_set_quote(q);     /* mirror the quote onto the home card */
     update_chart(&d->series);
     update_news(&d->news);
     update_metrics(&d->metrics);
 }
 
+void ui_stock_update_env(const ui_env_t *env) {
+    ui_home_tick();           /* keep the home clock current every refresh tick */
+    ui_home_set_env(env);
+
+    char buf[24];
+    if (env && env->battery_valid) {
+        int p = env->battery_pct;
+        const char *icon = p >= 88 ? LV_SYMBOL_BATTERY_FULL
+                         : p >= 62 ? LV_SYMBOL_BATTERY_3
+                         : p >= 38 ? LV_SYMBOL_BATTERY_2
+                         : p >= 12 ? LV_SYMBOL_BATTERY_1
+                                   : LV_SYMBOL_BATTERY_EMPTY;
+        snprintf(buf, sizeof(buf), "%s %d%%", icon, p);
+        lv_label_set_text(S.lbl_batt, buf);
+    } else {
+        lv_label_set_text(S.lbl_batt, LV_SYMBOL_BATTERY_EMPTY " --");
+    }
+}
+
 void ui_stock_show_page(int index) {
     if (index < 0 || index >= UI_STOCK_PAGE_COUNT) return;
+    if (index == UI_STOCK_PAGE_HOME) ui_home_tick();   /* fresh time on entry */
+    /* top bar shows only on the stock pages; the home card has its own header */
+    if (index == UI_STOCK_PAGE_HOME) lv_obj_add_flag(S.topbar, LV_OBJ_FLAG_HIDDEN);
+    else                              lv_obj_clear_flag(S.topbar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(S.page[S.cur_page], LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(S.page[index], LV_OBJ_FLAG_HIDDEN);
     S.cur_page = index;

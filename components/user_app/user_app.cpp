@@ -27,6 +27,7 @@
 #include "lvgl_bsp.h"      /* Lvgl_lock / Lvgl_unlock */
 #include "ui_stock.h"
 #include "stock_service.h"
+#include "board_io.h"      /* SHTC3 / RTC / battery */
 
 static const char *TAG = "app";
 static lv_obj_t  *s_screen;
@@ -57,6 +58,23 @@ void UserApp_UiInit(void) {
     ui_stock_create(s_screen);
 }
 
+/* Rotation order: return to the home (clock/weather) page between every stock
+ * page so the clock stays the dominant screen (pages: 1=chart 2=news 3=metrics). */
+static const int PAGE_SEQ[] = { UI_STOCK_PAGE_HOME, 1,
+                                UI_STOCK_PAGE_HOME, 2,
+                                UI_STOCK_PAGE_HOME, 3 };
+#define PAGE_SEQ_LEN ((int)(sizeof(PAGE_SEQ) / sizeof(PAGE_SEQ[0])))
+
+static void read_env(ui_env_t *env) {
+    float t = 0, h = 0;
+    env->env_valid = board_io_read_env(&t, &h);
+    env->temp_c    = t;
+    env->humidity  = h;
+    env->battery_v   = board_io_battery_voltage();
+    env->battery_pct = board_io_battery_percent();
+    env->battery_valid = env->battery_v > 0.1f;
+}
+
 static void StockTask(void *arg) {
     (void)arg;
     const char *key = CONFIG_STOCK_FINNHUB_API_KEY;
@@ -66,7 +84,7 @@ static void StockTask(void *arg) {
     int ticks_per_refresh = refresh / rotate;   if (ticks_per_refresh < 1) ticks_per_refresh = 1;
 
     static stock_data_t data;     /* static: keep off the task stack */
-    int    page = 0;
+    int    seq  = 0;
     int    tick = ticks_per_refresh; /* force an immediate first fetch */
     size_t sym_index = 0;            /* advances each refresh -> cycles the watchlist */
 
@@ -81,8 +99,16 @@ static void StockTask(void *arg) {
             tick = 0;
             sym_index++;
         }
-        if (Lvgl_lock(-1)) { ui_stock_show_page(page); Lvgl_unlock(); }
-        page = (page + 1) % UI_STOCK_PAGE_COUNT;
+
+        /* refresh sensors + clock every tick so the home page is always current */
+        ui_env_t env;
+        read_env(&env);
+        if (Lvgl_lock(-1)) {
+            ui_stock_update_env(&env);
+            ui_stock_show_page(PAGE_SEQ[seq]);
+            Lvgl_unlock();
+        }
+        seq = (seq + 1) % PAGE_SEQ_LEN;
         tick++;
         vTaskDelay(pdMS_TO_TICKS(rotate * 1000));
     }
