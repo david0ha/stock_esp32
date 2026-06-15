@@ -66,3 +66,9 @@ void buttons_init(QueueHandle_t out_queue)
     ESP_LOGI(TAG, "ready: USER=GPIO%d (next ticker), BOOT=GPIO%d (next view)",
              BUTTON_USER_GPIO, BUTTON_BOOT_GPIO);
 }
+
+bool buttons_both_pressed(void)
+{
+    /* Active-low: a held button reads 0. */
+    return gpio_get_level(BUTTON_USER_GPIO) == 0 && gpio_get_level(BUTTON_BOOT_GPIO) == 0;
+}

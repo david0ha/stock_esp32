@@ -35,6 +35,11 @@ typedef struct {
  * exists. Safe to call even if the GPIO ISR service is already installed. */
 void buttons_init(QueueHandle_t out_queue);
 
+/* True only while BOTH USER and BOOT are physically held down (active-low).
+ * Lets the app detect a deliberate KEY+BOOT chord by sampling real pin state,
+ * rather than guessing from the timing of two independent press events. */
+bool buttons_both_pressed(void);
+
 #ifdef __cplusplus
 }
 #endif
