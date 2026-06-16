@@ -93,13 +93,17 @@ void econ_week_range(time_t now_utc, long tz_off, int week_offset,
 
 /* ---- parsing ------------------------------------------------------------ */
 
-/* A numeric FMP field (estimate/actual/previous) -> short display text. Absent
- * or null -> "--". Big magnitudes drop the decimals to fit the narrow column. */
+/* An estimate/actual/previous field -> short display text. FMP sends numbers;
+ * the investing.com proxy sends unit-bearing strings ("1.00%", "262K"). Show a
+ * number with trimmed decimals, a non-empty string verbatim (ASCII-folded), and
+ * anything absent/null/empty as "--". */
 static void fmt_field(char *dst, size_t n, const cJSON *obj, const char *key) {
     const cJSON *it = cJSON_GetObjectItemCaseSensitive(obj, key);
     if (cJSON_IsNumber(it) && isfinite(it->valuedouble)) {
         double v = it->valuedouble, a = v < 0 ? -v : v;
         snprintf(dst, n, a >= 1000.0 ? "%.0f" : "%.2f", v);
+    } else if (cJSON_IsString(it) && it->valuestring[0]) {
+        to_ascii(dst, n, it->valuestring);
     } else {
         snprintf(dst, n, "--");
     }
