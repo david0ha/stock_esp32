@@ -11,7 +11,7 @@ firmware needs no code change — you just point it at this host.
 
 ```bash
 cd tools/econ_proxy
-docker compose up -d            # build + run on :8000, restarts on boot/crash
+docker compose up -d            # build + run on :8442, restarts on boot/crash
 docker compose logs -f          # watch requests
 docker compose down             # stop
 ```
@@ -19,19 +19,19 @@ docker compose down             # stop
 The image bundles `cloudscraper`/`requests` (Cloudflare resilience) plus a
 `/health` healthcheck, and runs as a non-root user. It's multi-arch, so the same
 command works on a Raspberry Pi (arm64). To relocate the port, edit the host side
-of the `ports:` mapping in `docker-compose.yml` (e.g. `"9000:8000"`).
+of the `ports:` mapping in `docker-compose.yml` (e.g. `"9000:8442"`).
 
 Without compose:
 
 ```bash
 docker build -t econ-proxy .
-docker run -d --name econ-proxy --restart unless-stopped -p 8000:8000 econ-proxy
+docker run -d --name econ-proxy --restart unless-stopped -p 8442:8442 econ-proxy
 ```
 
 ### Option B — plain Python
 
 ```bash
-python3 econ_proxy.py            # listens on 0.0.0.0:8000
+python3 econ_proxy.py            # listens on 0.0.0.0:8442
 # or:  PORT=9000 python3 econ_proxy.py
 ```
 
@@ -46,7 +46,7 @@ pip install -r requirements.txt   # cloudscraper + requests
 ## Point the device at it
 
 `idf.py menuconfig` → **Stock Monitor**:
-- `Economic calendar base URL` = `http://<this-host-ip>:8000/economic-calendar`
+- `Economic calendar base URL` = `http://<this-host-ip>:8442/economic-calendar`
 - `Financial Modeling Prep (FMP) API key` = any non-empty placeholder (ignored by the proxy)
 
 Then `idf.py build flash`. KEY+BOOT opens the calendar; it now serves
