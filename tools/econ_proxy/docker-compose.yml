@@ -1,0 +1,17 @@
+# Run the economic-calendar proxy as a long-lived service:
+#   docker compose up -d        # build + start in the background
+#   docker compose logs -f      # watch requests
+#   docker compose down         # stop
+#
+# Then point the device at  http://<this-host-ip>:8000/economic-calendar
+# (CONFIG_STOCK_ECON_BASE_URL in menuconfig).
+services:
+  econ-proxy:
+    build: .
+    image: econ-proxy
+    container_name: econ-proxy
+    ports:
+      - "8000:8000"          # host:container — change the host side to relocate
+    environment:
+      - PORT=8000
+    restart: unless-stopped
