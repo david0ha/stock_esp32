@@ -7,18 +7,40 @@ firmware needs no code change — you just point it at this host.
 
 ## Run it (on a PC / Raspberry Pi on the same LAN as the device)
 
+### Option A — Docker (recommended for always-on)
+
+```bash
+cd tools/econ_proxy
+docker compose up -d            # build + run on :8000, restarts on boot/crash
+docker compose logs -f          # watch requests
+docker compose down             # stop
+```
+
+The image bundles `cloudscraper`/`requests` (Cloudflare resilience) plus a
+`/health` healthcheck, and runs as a non-root user. It's multi-arch, so the same
+command works on a Raspberry Pi (arm64). To relocate the port, edit the host side
+of the `ports:` mapping in `docker-compose.yml` (e.g. `"9000:8000"`).
+
+Without compose:
+
+```bash
+docker build -t econ-proxy .
+docker run -d --name econ-proxy --restart unless-stopped -p 8000:8000 econ-proxy
+```
+
+### Option B — plain Python
+
 ```bash
 python3 econ_proxy.py            # listens on 0.0.0.0:8000
 # or:  PORT=9000 python3 econ_proxy.py
 ```
 
 No dependencies required (uses only the Python stdlib). If investing.com starts
-returning Cloudflare challenges, install either and the proxy uses it
+returning Cloudflare challenges, install the extras and the proxy uses them
 automatically:
 
 ```bash
-pip install cloudscraper      # most robust
-# or: pip install requests
+pip install -r requirements.txt   # cloudscraper + requests
 ```
 
 ## Point the device at it
@@ -41,6 +63,8 @@ GET /economic-calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&apikey=ignored]
 
 Times are UTC (the device converts to its own timezone). Importance: 3 bull
 icons = High, 2 = Medium, 1 = Low.
+
+`GET /health` returns `{"ok": true}` (used by the Docker healthcheck; no upstream call).
 
 > investing.com's terms discourage scraping; this is for personal, low-volume
 > use only (the device only fetches on a button press).

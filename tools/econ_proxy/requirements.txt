@@ -1,0 +1,5 @@
+# Optional but recommended: the proxy works on the stdlib alone, but these make
+# it resilient to investing.com's Cloudflare challenges. All are pure-Python
+# wheels (no compiler needed, so they install on a Raspberry Pi too).
+requests>=2.31
+cloudscraper>=1.2.71
