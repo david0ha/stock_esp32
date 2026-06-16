@@ -5,7 +5,7 @@ econ_proxy — a tiny self-hosted economic-calendar proxy for the ESP32 monitor.
 The FMP / Finnhub calendars are paywalled, so this scrapes investing.com's
 public economic-calendar AJAX endpoint and re-serves it as FMP-shaped JSON, so
 the firmware needs no code change — just point CONFIG_STOCK_ECON_BASE_URL at
-this host (e.g. http://192.168.0.10:8000/economic-calendar).
+this host (e.g. http://192.168.0.10:8442/economic-calendar).
 
     GET /economic-calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&apikey=ignored]
     ->  [ {"date":"YYYY-MM-DD HH:MM:SS",   # UTC
@@ -13,7 +13,7 @@ this host (e.g. http://192.168.0.10:8000/economic-calendar).
            "estimate":"0.3%", "actual":"", "previous":"0.2%",
            "impact":"High"}, ... ]
 
-Run:  python3 econ_proxy.py            # listens on 0.0.0.0:8000
+Run:  python3 econ_proxy.py            # listens on 0.0.0.0:8442
       PORT=9000 python3 econ_proxy.py
 
 Times are requested in GMT (investing timeZone=55) so the JSON is UTC; the
@@ -158,7 +158,7 @@ def main():
         sys.stderr.reconfigure(line_buffering=True)   # prompt logs when piped (docker logs)
     except Exception:                                 # noqa: BLE001  (older Pythons)
         pass
-    port = int(os.environ.get("PORT", "8000"))
+    port = int(os.environ.get("PORT", "8442"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print("econ_proxy listening on http://0.0.0.0:%d/economic-calendar" % port,
           file=sys.stderr)

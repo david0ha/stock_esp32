@@ -3,7 +3,7 @@
 #   docker compose logs -f      # watch requests
 #   docker compose down         # stop
 #
-# Then point the device at  http://<this-host-ip>:8000/economic-calendar
+# Then point the device at  http://<this-host-ip>:8442/economic-calendar
 # (CONFIG_STOCK_ECON_BASE_URL in menuconfig).
 services:
   econ-proxy:
@@ -11,7 +11,7 @@ services:
     image: econ-proxy
     container_name: econ-proxy
     ports:
-      - "8000:8000"          # host:container — change the host side to relocate
+      - "8442:8442"          # host:container — change the host side to relocate
     environment:
-      - PORT=8000
+      - PORT=8442
     restart: unless-stopped
