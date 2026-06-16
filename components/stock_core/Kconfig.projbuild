@@ -16,6 +16,35 @@ config STOCK_FINNHUB_API_KEY
       news. Stored per-developer in your local sdkconfig — do NOT commit a
       real key. Leave empty to disable the Finnhub-backed screens.
 
+config STOCK_FMP_API_KEY
+    string "Financial Modeling Prep (FMP) API key"
+    default ""
+    help
+      Free key from https://financialmodelingprep.com. Powers the economic
+      calendar screen (press KEY+BOOT together to open it). Stored per-developer
+      in your local sdkconfig — do NOT commit a real key. Leave empty to disable
+      the calendar (KEY+BOOT will show a "no FMP API key" message).
+
+config STOCK_ECON_BASE_URL
+    string "Economic calendar base URL"
+    default "https://financialmodelingprep.com/stable/economic-calendar"
+    help
+      The calendar is fetched from <base>?from=YYYY-MM-DD&to=YYYY-MM-DD&apikey=<key>.
+      Default is FMP (its calendar needs a paid plan -> free keys get HTTP 402).
+      To use the bundled free investing.com proxy instead (tools/econ_proxy),
+      set this to your host, e.g. http://192.168.0.10:8000/economic-calendar
+      (then STOCK_FMP_API_KEY may be any non-empty placeholder; the proxy ignores it).
+
+config STOCK_ECON_MIN_IMPACT
+    int "Economic calendar: minimum importance (1=Low 2=Medium 3=High)"
+    default 2
+    range 1 3
+    help
+      The economic calendar lists only events at or above this importance. The
+      400x300 panel fits ~14 rows per week; the default (2) keeps Medium + High
+      so the screen stays full. Set 3 for High-only, or 1 to include everything
+      (the earliest 14 are shown, with "(+N more)" when a week overflows).
+
 config STOCK_REFRESH_SECONDS
     int "Data refresh interval (seconds)"
     default 30

@@ -51,6 +51,46 @@ if(SANITIZE)
     target_link_options(test_service PRIVATE -fsanitize=address,undefined)
 endif()
 
+# economic-calendar parse/time helpers
+add_executable(test_econ
+    test_econ.c
+    ${CORE}/econ_parse.c
+    ${CJSON}/cJSON.c)
+
+target_include_directories(test_econ PRIVATE
+    ${CORE}/include
+    ${CJSON})
+
+target_compile_definitions(test_econ PRIVATE FIXDIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+target_compile_options(test_econ PRIVATE -Wall -Wextra -O0 -g)
+target_link_libraries(test_econ m)
+
+if(SANITIZE)
+    target_compile_options(test_econ PRIVATE -fsanitize=address,undefined)
+    target_link_options(test_econ PRIVATE -fsanitize=address,undefined)
+endif()
+
+# econ_service tests: link a fake http_get (defined in test_econ_service.c).
+add_executable(test_econ_service
+    test_econ_service.c
+    ${CORE}/econ_service.c
+    ${CORE}/econ_parse.c
+    ${CJSON}/cJSON.c)
+
+target_include_directories(test_econ_service PRIVATE
+    ${CORE}/include
+    ${CJSON})
+
+target_compile_options(test_econ_service PRIVATE -Wall -Wextra -O0 -g)
+target_link_libraries(test_econ_service m)
+
+if(SANITIZE)
+    target_compile_options(test_econ_service PRIVATE -fsanitize=address,undefined)
+    target_link_options(test_econ_service PRIVATE -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_test(NAME parse COMMAND test_parse)
 add_test(NAME service COMMAND test_service)
+add_test(NAME econ COMMAND test_econ)
+add_test(NAME econ_service COMMAND test_econ_service)

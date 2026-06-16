@@ -11,7 +11,10 @@ idf_component_register(
     SRCS
         "stock_parse.c"
         "stock_service.c"
+        "econ_parse.c"
+        "econ_service.c"
         "ui_stock.c"
+        "ui_econ.c"
         "ui_home.c"
         "ui_font_black_50.c"
         "ui_font_black_26.c"

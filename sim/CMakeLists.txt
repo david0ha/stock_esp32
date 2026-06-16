@@ -31,7 +31,10 @@ add_executable(sim
     http_port_curl.c
     ${CORE}/stock_parse.c
     ${CORE}/stock_service.c
+    ${CORE}/econ_parse.c
+    ${CORE}/econ_service.c
     ${CORE}/ui_stock.c
+    ${CORE}/ui_econ.c
     ${HOME_SRC}
     ${CORE}/ui_font_black_50.c
     ${CORE}/ui_font_black_26.c
