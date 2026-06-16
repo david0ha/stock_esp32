@@ -14,12 +14,12 @@ COPY econ_proxy.py .
 RUN useradd --create-home --uid 10001 app && chown -R app /app
 USER app
 
-ENV PORT=8000
+ENV PORT=8442
 ENV PYTHONUNBUFFERED=1
-EXPOSE 8000
+EXPOSE 8442
 
 # Liveness without hammering investing.com (hits the local /health route).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python3 -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8000'), timeout=3)" || exit 1
+    CMD python3 -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8442'), timeout=3)" || exit 1
 
 CMD ["python3", "econ_proxy.py"]
