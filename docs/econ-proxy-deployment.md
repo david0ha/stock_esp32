@@ -141,3 +141,130 @@ docker compose down
 | `docker compose` ARM 빌드 실패 | 거의 없음(순수 파이썬). 그래도 막히면 Docker 없이 `python3 econ_proxy.py` |
 
 자세한 코드/엔드포인트는 [`tools/econ_proxy/README.md`](../tools/econ_proxy/README.md) 참고.
+
+---
+
+## 7. 인터넷 노출: Cloudflare Tunnel + 공유 시크릿 (LAN/NAT 불필요)
+
+§1의 브리지/포트포워딩 대신, **Cloudflare Tunnel**로 프록시를 고정 HTTPS
+호스트네임에 노출하면 ESP32가 같은 LAN에 없어도 된다(NAT 문제 자체가 사라진다).
+기기 펌웨어는 이미 Mozilla CA 번들(`esp_crt_bundle`)을 붙여 통신하므로
+`https://...` 호스트네임을 추가 코드 없이 그대로 쓸 수 있다.
+
+### 7-1. 공유 시크릿 (공개 시 필수)
+공개되면 누구나 이 프록시로 investing.com을 긁을 수 있으므로 **반드시 토큰을 건다.**
+프록시는 `ECON_PROXY_TOKEN`이 설정되면 `/economic-calendar`에 일치하는
+`?apikey=<token>`을 요구한다(불일치 → `401`). `/health`는 열려 있다. 펌웨어는 이미
+`CONFIG_STOCK_FMP_API_KEY` 값을 `apikey`로 붙이므로, **그 설정값을 토큰과 동일하게**
+두면 끝이다.
+
+```bash
+# 토큰 생성 → 호스트 env(또는 .env)로 컨테이너에 주입
+export ECON_PROXY_TOKEN=$(openssl rand -hex 16)
+cd tools/econ_proxy && docker compose up -d --build
+echo "이 값을 menuconfig의 FMP API key 에 넣는다: $ECON_PROXY_TOKEN"
+```
+
+CI/CD로 배포할 때는 이 값을 **GitHub repo secret `ECON_PROXY_TOKEN`** 으로 넣는다
+(아래 §9). 기기 menuconfig: `Economic calendar base URL =
+https://econ.<도메인>/economic-calendar`, `FMP API key = <토큰>`.
+
+### 7-2. 전용 터널 만들기 (kanjis와 동일한 named-tunnel 패턴)
+이미 `cloudflared`가 깔려 있고 `~/.cloudflared/cert.pem`(계정 로그인)이 있으면
+재로그인 없이 새 터널을 만들 수 있다.
+
+```bash
+# 1) 전용 터널 생성 → ~/.cloudflared/<UUID>.json 자격증명 발급
+cloudflared tunnel create econ-proxy
+
+# 2) 공개 DNS 레코드(CNAME) 생성 — 보유 중인 존의 서브도메인
+cloudflared tunnel route dns econ-proxy econ.<도메인>
+
+# 3) 로컬 ingress 설정 (tj-song-search 터널과 같은 config 방식)
+cat > ~/.cloudflared/econ-config.yml <<'YAML'
+tunnel: econ-proxy
+credentials-file: /home/utmgg/.cloudflared/<UUID>.json
+ingress:
+  - hostname: econ.<도메인>
+    service: http://localhost:8442
+  - service: http_status:404
+YAML
+
+# 4) 포그라운드로 동작 확인
+cloudflared tunnel --config ~/.cloudflared/econ-config.yml run econ-proxy
+#   다른 셸에서:  curl -s https://econ.<도메인>/health  → {"ok": true}
+```
+
+### 7-3. systemd 서비스로 상시 가동 (sudo 필요)
+```ini
+# /etc/systemd/system/cloudflared-econ.service
+[Unit]
+Description=cloudflared econ-proxy tunnel (econ.<도메인>)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=utmgg
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /home/utmgg/.cloudflared/econ-config.yml tunnel run econ-proxy
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now cloudflared-econ
+sudo systemctl status cloudflared-econ
+```
+
+---
+
+## 8. 무료 호스트네임에 대하여
+
+- **Cloudflare Quick Tunnel**(`cloudflared tunnel --url http://localhost:8442`)은
+  계정·도메인 없이 즉시 `*.trycloudflare.com` 무료 주소를 주지만, **재시작마다
+  주소가 바뀐다.** 기기에 URL을 고정 플래시하는 용도엔 부적합.
+- 보유 도메인(`mojikun.com`/`tjsongsearch.org` 등)의 **서브도메인은 Cloudflare
+  무료 플랜에서 추가 비용 0원**이다(터널·DNS 레코드 무료). 고정 주소가 필요하므로
+  서브도메인 방식을 권장한다.
+
+---
+
+## 9. self-hosted runner로 자동배포 (CI/CD)
+
+이 저장소에는 `.github/workflows/deploy-econ-proxy.yml`이 있다. main에 푸시되어
+`tools/econ_proxy/**`가 바뀌면, **`econ-proxy` 라벨을 가진 self-hosted 러너**에서
+`docker compose up -d --build` 로 컨테이너를 재배포하고 `/health`로 검증한다.
+컨테이너의 `restart: unless-stopped` 가 평소 상시 가동을 담당하고, 이 워크플로는
+코드가 바뀔 때만 재롤한다.
+
+### 9-1. stock_esp32 전용 러너 등록 (기존 tj-song-search 러너와 별도)
+GitHub 러너 1개는 1개 레포만 담당하므로, **별도 디렉터리에 두 번째 러너**를 둔다.
+
+```bash
+# 등록 토큰 발급 (repo admin 권한 필요)
+gh api -X POST repos/david0ha/stock_esp32/actions/runners/registration-token -q .token
+
+mkdir -p ~/actions-runner-stock && cd ~/actions-runner-stock
+# 호스트 아키텍처에 맞는 러너 받기 (이 호스트는 arm64)
+curl -fsSLO https://github.com/actions/runner/releases/download/v2.335.1/actions-runner-linux-arm64-2.335.1.tar.gz
+tar xzf actions-runner-linux-arm64-2.335.1.tar.gz
+
+# 라벨 econ-proxy 로 등록 (워크플로의 runs-on 과 일치해야 함)
+./config.sh --url https://github.com/david0ha/stock_esp32 \
+            --token <위에서 받은 토큰> \
+            --name stock-esp32-econ --labels econ-proxy --unattended
+
+# systemd 서비스로 상시 가동
+sudo ./svc.sh install utmgg
+sudo ./svc.sh start
+```
+
+### 9-2. repo secret 설정
+```bash
+gh secret set ECON_PROXY_TOKEN --repo david0ha/stock_esp32   # 프록시 토큰과 동일 값
+```
+
+러너가 `docker compose`를 쓰므로 러너 실행 계정(utmgg)이 `docker` 그룹에 있어야 한다
+(`sudo usermod -aG docker utmgg` 후 재로그인). 이후 main 푸시 → 자동 빌드/배포.

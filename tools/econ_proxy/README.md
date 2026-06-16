@@ -43,11 +43,29 @@ automatically:
 pip install -r requirements.txt   # cloudscraper + requests
 ```
 
+## Shared secret (required when exposed publicly)
+
+On a private LAN the proxy can stay open. Once you expose it to the internet
+(e.g. via a Cloudflare tunnel — see [docs/econ-proxy-deployment.md](../../docs/econ-proxy-deployment.md)),
+gate it with a shared secret so strangers can't drive investing.com scraping
+through it. Set `ECON_PROXY_TOKEN`:
+
+```bash
+ECON_PROXY_TOKEN=$(openssl rand -hex 16) docker compose up -d   # or export it / use a .env file
+```
+
+When set, `/economic-calendar` requires a matching `?apikey=<token>` (else
+`401`); `/health` stays open. The firmware already appends `apikey` from
+`CONFIG_STOCK_FMP_API_KEY` — just set that config to the same token. Unset =
+open (backward compatible).
+
 ## Point the device at it
 
 `idf.py menuconfig` → **Stock Monitor**:
 - `Economic calendar base URL` = `http://<this-host-ip>:8442/economic-calendar`
-- `Financial Modeling Prep (FMP) API key` = any non-empty placeholder (ignored by the proxy)
+  (or `https://<your-tunnel-host>/economic-calendar` when exposed publicly)
+- `Financial Modeling Prep (FMP) API key` = the `ECON_PROXY_TOKEN` value
+  (or, if no token is set, any non-empty placeholder — the proxy ignores it)
 
 Then `idf.py build flash`. KEY+BOOT opens the calendar; it now serves
 investing.com data (with **actual** values and full prev/next-week navigation).
