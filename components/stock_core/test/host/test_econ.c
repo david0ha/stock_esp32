@@ -151,6 +151,21 @@ static void test_parse_cap(void) {
     CHECK_STR(c.items[ECON_EVENT_MAX - 1].when, "06-15 11:00"); /* 12th earliest */
 }
 
+static void test_parse_string_fields(void) {
+    printf("test_parse_string_fields\n");
+    /* The investing.com proxy keeps units, so estimate/actual/previous arrive as
+     * strings ("1.00%") not numbers. Show them verbatim; empty string -> "--". */
+    const char *j =
+        "[{\"date\":\"2026-06-16 12:00:00\",\"country\":\"JPY\",\"event\":\"BoJ Rate\","
+        "\"estimate\":\"1.00%\",\"actual\":\"\",\"previous\":\"0.75%\",\"impact\":\"High\"}]";
+    econ_calendar_t c;
+    CHECK(econ_parse_calendar(j, 0, ECON_IMPACT_HIGH, &c) == 0);
+    CHECK(c.count == 1);
+    CHECK_STR(c.items[0].estimate, "1.00%");
+    CHECK_STR(c.items[0].actual, "--");        /* empty string -> "--" */
+    CHECK_STR(c.items[0].previous, "0.75%");
+}
+
 static void test_parse_errors(void) {
     printf("test_parse_errors\n");
     econ_calendar_t c;
@@ -179,6 +194,7 @@ int main(void) {
     test_parse_tz_shift();
     test_parse_min_impact();
     test_parse_cap();
+    test_parse_string_fields();
     test_parse_errors();
     printf("\n%s  (%d checks, %d failed)\n", g_fail ? "FAILED" : "OK", g_total, g_fail);
     return g_fail ? 1 : 0;

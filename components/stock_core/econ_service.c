@@ -14,6 +14,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Source is swappable via Kconfig: FMP by default, or the bundled free
+ * investing.com proxy (tools/econ_proxy). Both answer the same
+ * ?from=&to=&apikey= query. Fallback keeps the simulator / host tests (no
+ * sdkconfig) compiling. */
+#ifndef CONFIG_STOCK_ECON_BASE_URL
+#define CONFIG_STOCK_ECON_BASE_URL "https://financialmodelingprep.com/stable/economic-calendar"
+#endif
+
 #define URL_MAX 320
 
 /* Pull a human-readable reason out of an FMP error body. FMP returns either a
@@ -56,9 +64,8 @@ int econ_service_fetch(const char *fmp_key, time_t now_utc, long tz_off,
         snprintf(out->error, sizeof(out->error), "no FMP API key set");
     } else {
         char url[URL_MAX];
-        snprintf(url, sizeof(url),
-                 "https://financialmodelingprep.com/stable/economic-calendar"
-                 "?from=%s&to=%s&apikey=%s", from, to, fmp_key);
+        snprintf(url, sizeof(url), "%s?from=%s&to=%s&apikey=%s",
+                 CONFIG_STOCK_ECON_BASE_URL, from, to, fmp_key);
 
         int st = 0;
         char *body = http_get(url, &st);

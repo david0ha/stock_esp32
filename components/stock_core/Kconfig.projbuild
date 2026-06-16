@@ -25,6 +25,16 @@ config STOCK_FMP_API_KEY
       in your local sdkconfig — do NOT commit a real key. Leave empty to disable
       the calendar (KEY+BOOT will show a "no FMP API key" message).
 
+config STOCK_ECON_BASE_URL
+    string "Economic calendar base URL"
+    default "https://financialmodelingprep.com/stable/economic-calendar"
+    help
+      The calendar is fetched from <base>?from=YYYY-MM-DD&to=YYYY-MM-DD&apikey=<key>.
+      Default is FMP (its calendar needs a paid plan -> free keys get HTTP 402).
+      To use the bundled free investing.com proxy instead (tools/econ_proxy),
+      set this to your host, e.g. http://192.168.0.10:8000/economic-calendar
+      (then STOCK_FMP_API_KEY may be any non-empty placeholder; the proxy ignores it).
+
 config STOCK_ECON_MIN_IMPACT
     int "Economic calendar: minimum importance (1=Low 2=Medium 3=High)"
     default 3

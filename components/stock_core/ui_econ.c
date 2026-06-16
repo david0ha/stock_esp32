@@ -18,7 +18,7 @@
 #define SCR_H      300
 #define ROW_TOP    30
 #define ROW_H      20
-#define RIGHT_W    96
+#define RIGHT_W    132   /* fits "E4.35% A4.35%"-style unit strings from investing */
 #define FOOTER_Y   282
 
 /* One source of truth for the navigation hint (the user's only control doc). */
@@ -102,6 +102,7 @@ void ui_econ_create(lv_obj_t *parent) {
 
         lv_obj_t *r = mk_label(S.page, &lv_font_montserrat_14);
         lv_obj_set_width(r, RIGHT_W);
+        lv_label_set_long_mode(r, LV_LABEL_LONG_CLIP);  /* never wrap into the next row */
         lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_RIGHT, 0);
         lv_label_set_text(r, "");
         lv_obj_align(r, LV_ALIGN_TOP_RIGHT, -6, y);
