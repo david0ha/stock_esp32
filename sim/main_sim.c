@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
 
     econ_calendar_t cal;
     if (*fmp) {
-        econ_service_fetch(fmp, now, tz_off, 0, ECON_IMPACT_HIGH, &cal);
+        econ_service_fetch(fmp, now, tz_off, 0, ECON_IMPACT_MEDIUM, &cal);
         printf("[econ] week %s valid=%d count=%d/%d %s\n", cal.week_label,
                cal.valid, cal.count, cal.total_matched, cal.valid ? "" : cal.error);
     } else {

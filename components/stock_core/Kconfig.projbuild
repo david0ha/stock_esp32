@@ -37,12 +37,13 @@ config STOCK_ECON_BASE_URL
 
 config STOCK_ECON_MIN_IMPACT
     int "Economic calendar: minimum importance (1=Low 2=Medium 3=High)"
-    default 3
+    default 2
     range 1 3
     help
       The economic calendar lists only events at or above this importance. The
-      400x300 panel fits ~12 rows per week, so the default keeps just the
-      High-impact (3-star) events; lower it to 2 or 1 to include Medium/Low.
+      400x300 panel fits ~14 rows per week; the default (2) keeps Medium + High
+      so the screen stays full. Set 3 for High-only, or 1 to include everything
+      (the earliest 14 are shown, with "(+N more)" when a week overflows).
 
 config STOCK_REFRESH_SECONDS
     int "Data refresh interval (seconds)"

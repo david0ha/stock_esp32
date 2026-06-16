@@ -85,9 +85,10 @@ static void test_parse_high_only(void) {
     CHECK(c.count == 3);            /* CPI, BoJ, Fed are High */
     CHECK(c.total_matched == 3);
 
-    /* sorted ascending by time: CPI 06-15, BoJ 06-17, Fed 06-18 */
+    /* sorted ascending by time: CPI Mon 06-15, BoJ Wed 06-17, Fed Thu 06-18.
+     * The "when" column is a short weekday + HH:MM. */
     CHECK_STR(c.items[0].country, "US");
-    CHECK_STR(c.items[0].when, "06-15 12:30");
+    CHECK_STR(c.items[0].when, "Mon 12:30");
     CHECK(strncmp(c.items[0].event, "CPI", 3) == 0);
     CHECK(c.items[0].impact == ECON_IMPACT_HIGH);
     CHECK_STR(c.items[0].estimate, "3.20");
@@ -95,12 +96,12 @@ static void test_parse_high_only(void) {
     CHECK_STR(c.items[0].previous, "3.10");
 
     CHECK_STR(c.items[1].country, "JP");
-    CHECK_STR(c.items[1].when, "06-17 03:00");
+    CHECK_STR(c.items[1].when, "Wed 03:00");
     CHECK_STR(c.items[1].estimate, "0.75");
     CHECK_STR(c.items[1].actual, "1.00");
 
     CHECK_STR(c.items[2].country, "US");
-    CHECK_STR(c.items[2].when, "06-18 14:00");
+    CHECK_STR(c.items[2].when, "Thu 14:00");
     free(j);
 }
 
@@ -109,10 +110,10 @@ static void test_parse_tz_shift(void) {
     char *j = slurp("fmp_econ.json");
     econ_calendar_t c;
     CHECK(econ_parse_calendar(j, KST, ECON_IMPACT_HIGH, &c) == 0);
-    /* CPI 06-15 12:30 UTC -> 21:30 KST same day */
-    CHECK_STR(c.items[0].when, "06-15 21:30");
-    /* BoJ 06-17 03:00 UTC -> 12:00 KST same day */
-    CHECK_STR(c.items[1].when, "06-17 12:00");
+    /* CPI 06-15(Mon) 12:30 UTC -> 21:30 KST same day */
+    CHECK_STR(c.items[0].when, "Mon 21:30");
+    /* BoJ 06-17(Wed) 03:00 UTC -> 12:00 KST same day */
+    CHECK_STR(c.items[1].when, "Wed 12:00");
     free(j);
 }
 
@@ -132,11 +133,13 @@ static void test_parse_min_impact(void) {
 
 static void test_parse_cap(void) {
     printf("test_parse_cap\n");
-    /* 14 High events, hours 00..13 on the same day: keep earliest ECON_EVENT_MAX. */
-    char buf[4096];
+    /* ECON_EVENT_MAX+3 High events, hours 00.. on 2026-06-15 (Monday): only the
+     * earliest ECON_EVENT_MAX are kept, total_matched counts them all. */
+    const int extra = 3, total = ECON_EVENT_MAX + extra;
+    char buf[8192];
     size_t n = 0;
     n += snprintf(buf + n, sizeof(buf) - n, "[");
-    for (int h = 0; h < 14; h++) {
+    for (int h = 0; h < total; h++) {
         n += snprintf(buf + n, sizeof(buf) - n,
             "%s{\"date\":\"2026-06-15 %02d:00:00\",\"country\":\"US\","
             "\"event\":\"E%d\",\"impact\":\"High\"}", h ? "," : "", h, h);
@@ -146,9 +149,11 @@ static void test_parse_cap(void) {
     econ_calendar_t c;
     CHECK(econ_parse_calendar(buf, 0, ECON_IMPACT_HIGH, &c) == 0);
     CHECK(c.count == ECON_EVENT_MAX);
-    CHECK(c.total_matched == 14);
-    CHECK_STR(c.items[0].when, "06-15 00:00");                 /* earliest kept */
-    CHECK_STR(c.items[ECON_EVENT_MAX - 1].when, "06-15 11:00"); /* 12th earliest */
+    CHECK(c.total_matched == total);
+    CHECK_STR(c.items[0].when, "Mon 00:00");                 /* earliest kept */
+    char last[ECON_WHEN_MAXLEN];
+    snprintf(last, sizeof(last), "Mon %02d:00", ECON_EVENT_MAX - 1);
+    CHECK_STR(c.items[ECON_EVENT_MAX - 1].when, last);       /* last kept */
 }
 
 static void test_parse_string_fields(void) {

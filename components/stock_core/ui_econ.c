@@ -16,10 +16,10 @@
 
 #define SCR_W      400
 #define SCR_H      300
-#define ROW_TOP    30
-#define ROW_H      20
+#define ROW_TOP    28    /* just below the title divider at y=26 */
+#define ROW_H      18    /* 14 rows of montserrat_14 fill the body */
 #define RIGHT_W    132   /* fits "E4.35% A4.35%"-style unit strings from investing */
-#define FOOTER_Y   282
+#define FOOTER_Y   283
 
 /* One source of truth for the navigation hint (the user's only control doc). */
 #define FOOTER_NAV "KEY<prev  BOOT>next  K+B:home"

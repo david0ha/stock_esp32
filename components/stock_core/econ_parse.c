@@ -34,13 +34,14 @@ int64_t econ_ymd_to_epoch(int year, int month, int day, int hour, int min, int s
          + (int64_t)hour * 3600 + (int64_t)min * 60 + sec;
 }
 
-/* Epoch (UTC) + tz offset -> "MM-DD HH:MM" in the device-local zone. We add the
- * offset and read it back with gmtime_r so the result is independent of the
- * host's own TZ (the same trick ui_stock uses for exchange-local chart labels). */
+/* Epoch (UTC) + tz offset -> short "Ddd HH:MM" (weekday + time) in the
+ * device-local zone. The week label already carries the date range, so a per-row
+ * weekday is enough context and keeps the column narrow. We add the offset and
+ * read it back with gmtime_r so the result is independent of the host's own TZ. */
 static void fmt_local_when(char *buf, size_t n, int64_t epoch_utc, long tz_off) {
     time_t t = (time_t)(epoch_utc + tz_off);
     struct tm tm;
-    if (gmtime_r(&t, &tm)) strftime(buf, n, "%m-%d %H:%M", &tm);
+    if (gmtime_r(&t, &tm)) strftime(buf, n, "%a %H:%M", &tm);
     else if (n)           buf[0] = '\0';
 }
 

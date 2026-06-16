@@ -9,8 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The 400x300 mono panel fits ~12 single-line rows under a title + footer. */
-#define ECON_EVENT_MAX      12
+/* The 400x300 mono panel fits ~14 single-line rows under a title + footer. */
+#define ECON_EVENT_MAX      14
 #define ECON_COUNTRY_MAXLEN 6    /* ISO country/area code: "US", "JP", "EU"     */
 #define ECON_NAME_MAXLEN    40   /* event name (UI truncates with "..." anyway) */
 #define ECON_FIELD_MAXLEN   12   /* estimate / actual / previous as display text */
