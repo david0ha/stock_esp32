@@ -81,12 +81,14 @@ static prov_config_t s_cfg;
 #define HOME_TICK_SECONDS 15
 
 /* Pressing KEY (USER) + BOOT together toggles the economic-calendar view. The
- * two GPIOs fire independent edge events, so on the first event we wait this
- * brief settle for the second finger to land, then sample the real pin state
- * (buttons_both_pressed). Sampling GPIO rather than event timing means an
- * ordinary single press is handled immediately and two quick *separate* presses
- * are never mistaken for a chord. */
-#define CHORD_SETTLE_MS 60
+ * two GPIOs fire independent edge events, so on the first event we poll the real
+ * pin state (buttons_both_pressed) every CHORD_POLL_MS up to CHORD_WINDOW_MS,
+ * stopping as soon as both are held. Polling GPIO (not event timing) means two
+ * quick *separate* presses are never mistaken for a chord, and the window
+ * tolerates a second finger that lands a little late. A genuine single press
+ * costs at most CHORD_WINDOW_MS of latency. */
+#define CHORD_POLL_MS    15
+#define CHORD_WINDOW_MS  120
 
 static QueueHandle_t     s_btn_queue;     /* USER/BOOT presses */
 static SemaphoreHandle_t s_mtx;
@@ -169,6 +171,10 @@ static void tick_home_env(void) {
  * the lock is only ever held for fast in-memory + LVGL ops, never the network. */
 static void render_current(void) {
     state_lock();
+    /* The calendar overlay is up: don't paint the stock UI underneath. Checked
+     * under s_mtx (set by toggle_econ) so a concurrent toggle can't slip a stock
+     * repaint in after the check — no TOCTOU. */
+    if (s_econ_mode) { state_unlock(); return; }
     int  idx  = s_sym_index;
     int  page = s_page;
     bool have = s_valid[idx];
@@ -258,14 +264,14 @@ static void FetchTask(void *arg) {
         s_busy[idx] = false;
         double px = s_cache[idx].quote.price, pct = s_cache[idx].quote.percent;
         bool is_current = (idx == s_sym_index);
-        bool econ_up    = s_econ_mode;   /* don't paint stock under the overlay */
         state_unlock();
 
         ESP_LOGI(TAG, "[w%d] %-5s %s ok=%d  price=%.2f (%+.2f%%)  %s",
                  wid, full ? "full" : "quote", sym, ok, px, pct,
                  is_current ? "[on screen]" : "[cached]");
 
-        if (is_current && stored && !econ_up) render_current();
+        /* render_current() self-skips while the calendar overlay is up. */
+        if (is_current && stored) render_current();
     }
 }
 
@@ -381,11 +387,15 @@ static void StockTask(void *arg) {
     for (;;) {
         button_event_t ev;
         if (xQueueReceive(s_btn_queue, &ev, pdMS_TO_TICKS(HOME_TICK_SECONDS * 1000)) == pdTRUE) {
-            /* Let a possible second finger land, then read the real pin state:
-             * both held == KEY+BOOT chord (toggle the calendar); otherwise it's
-             * a single press. */
-            vTaskDelay(pdMS_TO_TICKS(CHORD_SETTLE_MS));
-            if (buttons_both_pressed()) {
+            /* Poll the pins for a chord (both held), stopping early once seen;
+             * tolerates a slightly-late second finger without delaying a true
+             * single press by more than CHORD_WINDOW_MS. */
+            bool chord = buttons_both_pressed();
+            for (int w = 0; !chord && w < CHORD_WINDOW_MS; w += CHORD_POLL_MS) {
+                vTaskDelay(pdMS_TO_TICKS(CHORD_POLL_MS));
+                chord = buttons_both_pressed();
+            }
+            if (chord) {
                 button_event_t drop;   /* discard the partner edge(s) of the chord */
                 while (xQueueReceive(s_btn_queue, &drop, 0) == pdTRUE) { }
                 toggle_econ();
@@ -430,7 +440,7 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
 
     s_mtx        = xSemaphoreCreateMutex();
     s_fetch_wake = xSemaphoreCreateCounting(PROV_MAX_TICKERS + NUM_FETCHERS, 0);
-    s_btn_queue  = xQueueCreate(8, sizeof(button_event_t));
+    s_btn_queue  = xQueueCreate(16, sizeof(button_event_t));
     buttons_init(s_btn_queue);
 
     /* FetchTask workers: big stack for the TLS handshake + JSON parsing. */

@@ -184,10 +184,12 @@ static void show_message(const char *week_label, const char *footer, const char 
 }
 
 void ui_econ_set_loading(const char *week_label) {
+    if (!S.page) return;
     show_message(week_label, "", "Loading...");
 }
 
 void ui_econ_set_calendar(const econ_calendar_t *cal) {
+    if (!S.page || !cal) return;
     if (!cal->valid) {
         show_message(cal->week_label, "KEY<prev  BOOT>next  K+B:home",
                      cal->error[0] ? cal->error : "error");

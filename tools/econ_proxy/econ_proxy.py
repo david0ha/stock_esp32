@@ -59,20 +59,29 @@ def fetch_investing(date_from, date_to):
         "Accept": "*/*",
     }
 
-    # cloudscraper / requests if available (more robust against Cloudflare)
+    # Try cloudscraper -> requests -> urllib, falling through on ANY failure
+    # (an installed lib that hits a Cloudflare HTML page must not abort the chain).
+    last_err = None
     for mod in ("cloudscraper", "requests"):
         try:
             lib = __import__(mod)
+        except ImportError:
+            continue
+        try:
             sess = lib.create_scraper() if mod == "cloudscraper" else lib
             r = sess.post(INVESTING_URL, data=body, headers=headers, timeout=25)
             r.raise_for_status()
             return r.json()["data"]
-        except ImportError:
-            continue
+        except Exception as e:                      # noqa: BLE001  (retry via next method)
+            last_err = e
 
-    req = urllib.request.Request(INVESTING_URL, data=body.encode(), headers=headers)
-    with urllib.request.urlopen(req, timeout=25) as resp:
-        return json.loads(resp.read().decode("utf-8", "replace"))["data"]
+    try:
+        req = urllib.request.Request(INVESTING_URL, data=body.encode(), headers=headers)
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))["data"]
+    except Exception as e:                          # noqa: BLE001
+        last_err = e
+    raise RuntimeError("all fetch methods failed: %s" % last_err)
 
 
 def _text(cell_html):
@@ -123,6 +132,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.rstrip("/") == "/health":     # cheap liveness (no upstream)
+            self._send(200, {"ok": True})
+            return
         if parsed.path.rstrip("/") != "/economic-calendar":
             self._send(404, {"Error Message": "not found"})
             return
@@ -142,6 +154,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    try:
+        sys.stderr.reconfigure(line_buffering=True)   # prompt logs when piped (docker logs)
+    except Exception:                                 # noqa: BLE001  (older Pythons)
+        pass
     port = int(os.environ.get("PORT", "8000"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print("econ_proxy listening on http://0.0.0.0:%d/economic-calendar" % port,
