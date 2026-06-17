@@ -23,6 +23,7 @@ device applies its own timezone. Importance comes from the bull-icon count
 Note: investing.com's terms discourage scraping — this is intended for personal,
 low-volume use only. Be polite (the device polls at most on button presses).
 """
+import hmac
 import html
 import json
 import os
@@ -31,6 +32,12 @@ import sys
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Optional shared secret. When ECON_PROXY_TOKEN is set, /economic-calendar
+# requires a matching ?apikey=<token> (the firmware already sends apikey, set
+# from CONFIG_STOCK_FMP_API_KEY). Unset -> open (LAN-only / backward compatible).
+# Needed once the proxy is exposed publicly via a Cloudflare tunnel.
+TOKEN = os.environ.get("ECON_PROXY_TOKEN", "")
 
 INVESTING_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -139,6 +146,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"Error Message": "not found"})
             return
         q = urllib.parse.parse_qs(parsed.query)
+        if TOKEN:                                     # shared-secret gate (public exposure)
+            given = (q.get("apikey") or [""])[0]
+            if not hmac.compare_digest(given, TOKEN):  # constant-time, no timing leak
+                self._send(401, {"Error Message": "unauthorized"})
+                return
         date_from = (q.get("from") or [""])[0]
         date_to = (q.get("to") or [date_from])[0]
         if not DATE_RE.match(date_from) or not DATE_RE.match(date_to):
@@ -160,8 +172,8 @@ def main():
         pass
     port = int(os.environ.get("PORT", "8442"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print("econ_proxy listening on http://0.0.0.0:%d/economic-calendar" % port,
-          file=sys.stderr)
+    print("econ_proxy listening on http://0.0.0.0:%d/economic-calendar (auth: %s)"
+          % (port, "on" if TOKEN else "OFF"), file=sys.stderr)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

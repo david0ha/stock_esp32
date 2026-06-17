@@ -1,0 +1,47 @@
+# Continuous deploy for the economic-calendar proxy (tools/econ_proxy).
+#
+# Runs on a SELF-HOSTED runner registered to this repo with the custom label
+# `econ-proxy` (see docs/econ-proxy-deployment.md §runner). On every push to
+# main that touches the proxy, it rebuilds + restarts the container. The
+# container's own `restart: unless-stopped` keeps it alive between deploys; this
+# job only re-rolls it when the code changes.
+#
+# Secrets/vars used:
+#   secrets.ECON_PROXY_TOKEN  - shared secret; passed to the container so
+#                               /economic-calendar requires ?apikey=<token>.
+name: deploy econ-proxy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/econ_proxy/**"
+      - ".github/workflows/deploy-econ-proxy.yml"
+  workflow_dispatch: {}
+
+# Never run two deploys at once; let the latest win.
+concurrency:
+  group: deploy-econ-proxy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, econ-proxy]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & (re)start the proxy
+        working-directory: tools/econ_proxy
+        env:
+          ECON_PROXY_TOKEN: ${{ secrets.ECON_PROXY_TOKEN }}
+        run: docker compose up -d --build
+
+      - name: Health check
+        working-directory: tools/econ_proxy
+        run: |
+          set -e
+          for i in $(seq 1 10); do
+            if curl -fsS localhost:8442/health; then echo; echo "healthy"; exit 0; fi
+            echo "waiting for proxy... ($i)"; sleep 2
+          done
+          echo "proxy did not become healthy"; docker compose logs --tail=50; exit 1

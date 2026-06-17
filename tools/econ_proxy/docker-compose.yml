@@ -14,4 +14,9 @@ services:
       - "8442:8442"          # host:container — change the host side to relocate
     environment:
       - PORT=8442
+      # Shared secret. When set, /economic-calendar requires ?apikey=<token>
+      # (set the device's CONFIG_STOCK_FMP_API_KEY to the same value). Leave
+      # empty for an open LAN-only deployment. REQUIRED when exposed publicly
+      # via the Cloudflare tunnel. Provide it from the host env (or a .env file).
+      - ECON_PROXY_TOKEN=${ECON_PROXY_TOKEN:-}
     restart: unless-stopped
