@@ -92,6 +92,39 @@ void econ_week_range(time_t now_utc, long tz_off, int week_offset,
     }
 }
 
+/* True if the Mon..Sun week `monday0 + 7*w` (in day numbers) intersects the
+ * month spanning day numbers [first, last]. */
+static bool week_overlaps_month(int64_t monday0, int64_t first, int64_t last, int w) {
+    int64_t mon = monday0 + (int64_t)w * 7;
+    return mon <= last && mon + 6 >= first;
+}
+
+void econ_month_week_span(time_t now_utc, long tz_off, int *w_min, int *w_max) {
+    time_t local = now_utc + tz_off;
+    struct tm t;
+    gmtime_r(&local, &t);
+
+    int Y = t.tm_year + 1900, M = t.tm_mon + 1;
+    int64_t first = days_from_civil(Y, M, 1);
+    int ny = (M == 12) ? Y + 1 : Y, nm = (M == 12) ? 1 : M + 1;
+    int64_t last  = days_from_civil(ny, nm, 1) - 1;          /* last day of month */
+
+    /* Monday of the current week as a day number. Derive it by stepping back in
+     * seconds then reading the civil date (like econ_week_range), so it floors
+     * correctly even if `local` is negative (clock unset before SNTP). */
+    int wday_from_mon = (t.tm_wday + 6) % 7;                 /* Mon=0 .. Sun=6     */
+    time_t monday = local - (time_t)wday_from_mon * SECS_PER_DAY;
+    struct tm tm_mon;
+    gmtime_r(&monday, &tm_mon);
+    int64_t monday0 = days_from_civil(tm_mon.tm_year + 1900, tm_mon.tm_mon + 1, tm_mon.tm_mday);
+
+    int lo = 0, hi = 0;                                      /* current week always overlaps */
+    while (week_overlaps_month(monday0, first, last, lo - 1)) lo--;
+    while (week_overlaps_month(monday0, first, last, hi + 1)) hi++;
+    if (w_min) *w_min = lo;
+    if (w_max) *w_max = hi;
+}
+
 /* ---- parsing ------------------------------------------------------------ */
 
 /* An estimate/actual/previous field -> short display text. FMP sends numbers;

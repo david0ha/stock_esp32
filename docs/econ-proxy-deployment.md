@@ -94,7 +94,8 @@ curl -s "http://<VM-LAN-IP>:8442/health"
 - (선택) `Economic calendar: minimum importance` — 1=전부 / 2=Medium+High(기본) / 3=High만
 
 이후 `idf.py build flash`. KEY+BOOT로 캘린더를 열면 investing.com 데이터(실제치
-포함)가 표시되고, KEY=저번주 / BOOT=다음주로 이동한다.
+포함)가 표시된다. 캘린더 안에서 **KEY=이번 주 다음 이벤트 페이지(주 안에서 순환)**,
+**BOOT=다음 주(이번 달의 주들 안에서 순환)**, 다시 **KEY+BOOT=홈 복귀**다.
 
 ---
 

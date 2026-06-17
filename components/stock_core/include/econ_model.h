@@ -10,7 +10,10 @@
 #include <stdint.h>
 
 /* Two-line (investing.com-style) cards: the 400x300 panel fits 7 per screen. */
-#define ECON_EVENT_MAX      7
+#define ECON_PAGE_MAX       7    /* events rendered per screen page              */
+/* Events stored per week. A busy week (Medium+High) runs ~60 events; keep room
+ * to page through them all (KEY scrolls within the week). ~112B each => ~7KB.  */
+#define ECON_EVENT_MAX      64
 #define ECON_COUNTRY_MAXLEN 6    /* ISO country/area code: "US", "JP", "EU"     */
 #define ECON_NAME_MAXLEN    40   /* event name (UI truncates with "..." anyway) */
 #define ECON_FIELD_MAXLEN   12   /* estimate / actual / previous as display text */
@@ -36,6 +39,14 @@ typedef struct {
     int     impact;                        /* econ_impact_t                     */
     int64_t ts;                            /* event time, UTC epoch (sort key)  */
 } econ_event_t;
+
+/* Pages needed to show `count` events at ECON_PAGE_MAX per screen. Always >= 1
+ * so an empty/error week still renders a single message page. Shared by the UI,
+ * the app's page navigation, and the simulator so they can't drift. */
+static inline int econ_page_count(int count) {
+    int p = (count + ECON_PAGE_MAX - 1) / ECON_PAGE_MAX;
+    return p < 1 ? 1 : p;
+}
 
 typedef struct {
     int          count;                    /* events in items[] (<= ECON_EVENT_MAX) */

@@ -195,12 +195,16 @@ int main(int argc, char **argv) {
         snprintf(cal.week_label, sizeof(cal.week_label), "06-15 ~ 06-21");
         printf("[econ] sample week (no FMP_KEY) count=%d\n", cal.count);
     }
-    ui_econ_set_calendar(&cal);
     ui_econ_show(true);
-    run_refresh(16);
-    snprintf(path, sizeof(path), "%s/sim_econ.bmp", outdir);
-    write_mono_bmp(path);
-    printf("wrote %s\n", path);
+    int pages = econ_page_count(cal.valid ? cal.count : 0);
+    for (int p = 0; p < pages && p < 4; p++) {        /* KEY pages through the week */
+        ui_econ_set_calendar(&cal, p);
+        run_refresh(16);
+        if (p == 0) snprintf(path, sizeof(path), "%s/sim_econ.bmp", outdir);
+        else        snprintf(path, sizeof(path), "%s/sim_econ_p%d.bmp", outdir, p + 1);
+        write_mono_bmp(path);
+        printf("wrote %s\n", path);
+    }
 
     return 0;
 }

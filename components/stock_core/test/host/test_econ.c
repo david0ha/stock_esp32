@@ -75,6 +75,30 @@ static void test_week_range(void) {
     CHECK_STR(from, "2026-06-15");          /* KST: rolled into this week */
 }
 
+static void test_month_week_span(void) {
+    printf("test_month_week_span\n");
+    int lo = 99, hi = -99;
+
+    /* 2026-06-16 (Tue): June's Mon..Sun weeks span 06-01..07-05, i.e. offsets
+     * -2..+2 around the current (06-15 ~ 06-21) week. */
+    time_t jun = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
+    econ_month_week_span(jun, 0, &lo, &hi);
+    CHECK(lo == -2);
+    CHECK(hi == +2);
+
+    /* 2026-07-01 (Wed) sits in the week starting Mon 06-29; that week overlaps
+     * July, so the current week is the FIRST of the month (lo == 0) and July
+     * runs out to the week of 07-27 (+4). */
+    time_t jul = (time_t)econ_ymd_to_epoch(2026, 7, 1, 12, 0, 0);
+    econ_month_week_span(jul, 0, &lo, &hi);
+    CHECK(lo == 0);
+    CHECK(hi == +4);
+
+    /* The current week is always inside the span (now is inside that week). */
+    econ_month_week_span(jun, KST, &lo, &hi);
+    CHECK(lo <= 0 && hi >= 0);
+}
+
 static void test_parse_high_only(void) {
     printf("test_parse_high_only\n");
     char *j = slurp("fmp_econ.json");
@@ -133,16 +157,20 @@ static void test_parse_min_impact(void) {
 
 static void test_parse_cap(void) {
     printf("test_parse_cap\n");
-    /* ECON_EVENT_MAX+3 High events, hours 00.. on 2026-06-15 (Monday): only the
-     * earliest ECON_EVENT_MAX are kept, total_matched counts them all. */
+    /* ECON_EVENT_MAX+3 High events, all on 2026-06-15 (Monday) at strictly
+     * increasing times (14-min steps keep them within the day for any
+     * ECON_EVENT_MAX): only the earliest ECON_EVENT_MAX are kept, total_matched
+     * counts them all. */
     const int extra = 3, total = ECON_EVENT_MAX + extra;
-    char buf[8192];
+    char buf[16384];
     size_t n = 0;
     n += snprintf(buf + n, sizeof(buf) - n, "[");
     for (int h = 0; h < total; h++) {
+        int mins = h * 14;                 /* < 24h for the realistic cap range */
         n += snprintf(buf + n, sizeof(buf) - n,
-            "%s{\"date\":\"2026-06-15 %02d:00:00\",\"country\":\"US\","
-            "\"event\":\"E%d\",\"impact\":\"High\"}", h ? "," : "", h, h);
+            "%s{\"date\":\"2026-06-15 %02d:%02d:00\",\"country\":\"US\","
+            "\"event\":\"E%d\",\"impact\":\"High\"}", h ? "," : "",
+            mins / 60, mins % 60, h);
     }
     n += snprintf(buf + n, sizeof(buf) - n, "]");
 
@@ -152,7 +180,8 @@ static void test_parse_cap(void) {
     CHECK(c.total_matched == total);
     CHECK_STR(c.items[0].when, "Mon 00:00");                 /* earliest kept */
     char last[ECON_WHEN_MAXLEN];
-    snprintf(last, sizeof(last), "Mon %02d:00", ECON_EVENT_MAX - 1);
+    int lm = (ECON_EVENT_MAX - 1) * 14;
+    snprintf(last, sizeof(last), "Mon %02d:%02d", lm / 60, lm % 60);
     CHECK_STR(c.items[ECON_EVENT_MAX - 1].when, last);       /* last kept */
 }
 
@@ -195,6 +224,7 @@ int main(void) {
     test_ymd_to_epoch();
     test_impact_from_str();
     test_week_range();
+    test_month_week_span();
     test_parse_high_only();
     test_parse_tz_shift();
     test_parse_min_impact();

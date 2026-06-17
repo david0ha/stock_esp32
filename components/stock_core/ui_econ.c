@@ -36,7 +36,7 @@
 #define COL3_X     272
 #define CELL_W     124
 
-#define EVT_N      ECON_EVENT_MAX
+#define EVT_N      ECON_PAGE_MAX
 
 static const lv_color_t BLACK = LV_COLOR_MAKE(0, 0, 0);
 static const lv_color_t WHITE = LV_COLOR_MAKE(0xff, 0xff, 0xff);
@@ -188,26 +188,33 @@ void ui_econ_set_loading(const char *week_label) {
     show_message(week_label, "", "Loading...");
 }
 
-void ui_econ_set_calendar(const econ_calendar_t *cal) {
+/* Controls hint shown on the message screens (loading / error / empty). */
+#define ECON_HINT "KEY>events  BOOT>week  K+B:home"
+
+void ui_econ_set_calendar(const econ_calendar_t *cal, int page) {
     if (!S.page || !cal) return;
     if (!cal->valid) {
-        show_message(cal->week_label, "KEY<prev  BOOT>next  K+B:home",
-                     cal->error[0] ? cal->error : "error");
+        show_message(cal->week_label, ECON_HINT, cal->error[0] ? cal->error : "error");
         return;
     }
     if (cal->count == 0) {
-        show_message(cal->week_label, "KEY<prev  BOOT>next  K+B:home",
-                     "No events this week");
+        show_message(cal->week_label, ECON_HINT, "No events this week");
         return;
     }
+
+    int pages = econ_page_count(cal->count);
+    if (page < 0) page = 0;
+    if (page >= pages) page = pages - 1;
+    int base = page * ECON_PAGE_MAX;
 
     set_title(cal->week_label);
     lv_obj_add_flag(S.msg, LV_OBJ_FLAG_HIDDEN);
 
     for (int i = 0; i < EVT_N; i++) {
-        if (i >= cal->count) { show_event(i, false); continue; }
+        int idx = base + i;
+        if (idx >= cal->count) { show_event(i, false); continue; }
         show_event(i, true);
-        const econ_event_t *e = &cal->items[i];
+        const econ_event_t *e = &cal->items[idx];
 
         char head[ECON_WHEN_MAXLEN + ECON_COUNTRY_MAXLEN + ECON_NAME_MAXLEN + 12];
         snprintf(head, sizeof(head), "%s  %s  %s  %s",
@@ -220,12 +227,16 @@ void ui_econ_set_calendar(const econ_calendar_t *cal) {
         snprintf(cell, sizeof(cell), "Prev %s", e->previous); lv_label_set_text(S.ev[i].val[2], cell);
     }
 
-    int more = cal->total_matched - cal->count;
-    if (more > 0) {
-        char footer[64];
-        snprintf(footer, sizeof(footer), "KEY<prev  BOOT>next  (+%d more)", more);
-        lv_label_set_text(S.footer, footer);
-    } else {
-        lv_label_set_text(S.footer, "KEY<prev  BOOT>next  K+B:home");
-    }
+    /* Footer doubles as the controls legend + a "page n/N (of this week)" so the
+     * user knows KEY pages through the rest of the week before BOOT changes week.
+     * A busy week can match more events than we can store (ECON_EVENT_MAX); show
+     * "+N" so the dropped (latest) events aren't silently hidden. */
+    char footer[64];
+    int dropped = cal->total_matched - cal->count;
+    if (dropped > 0)
+        snprintf(footer, sizeof(footer), "KEY>events  BOOT>week  %d/%d +%d",
+                 page + 1, pages, dropped);
+    else
+        snprintf(footer, sizeof(footer), "KEY>events  BOOT>week  %d/%d", page + 1, pages);
+    lv_label_set_text(S.footer, footer);
 }

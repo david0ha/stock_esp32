@@ -20,7 +20,9 @@ extern "C" {
 void ui_econ_create(lv_obj_t *parent);
 void ui_econ_show(bool show);                          /* overlay on/off          */
 void ui_econ_set_loading(const char *week_label);      /* "Loading..." placeholder */
-void ui_econ_set_calendar(const econ_calendar_t *cal); /* render events or error   */
+/* Render one page of the week: events [page*ECON_PAGE_MAX .. +ECON_PAGE_MAX) (or
+ * the error/empty message). The footer shows the page number within the week. */
+void ui_econ_set_calendar(const econ_calendar_t *cal, int page);
 
 #ifdef __cplusplus
 }

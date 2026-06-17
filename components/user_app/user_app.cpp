@@ -106,13 +106,15 @@ static size_t        s_ticker_n = 1;                /* watchlist length (>=1)   
 static int s_sym_index;   /* which ticker is on screen                       */
 static int s_page;        /* 0=home, 1=chart, 2=news, 3=metrics (starts home) */
 
-/* Economic-calendar overlay state. s_econ_mode / s_econ_week are guarded by
- * s_mtx (read cross-task by FetchTask). s_econ itself is only ever touched by
- * StockTask — written by render_econ, read synchronously into LVGL right after —
- * so it needs no lock; keep it that way (don't read s_econ from another task). */
-static bool            s_econ_mode;   /* calendar overlay shown instead of stock */
-static int             s_econ_week;   /* 0 = this week, -1 = previous, +1 = next  */
-static econ_calendar_t s_econ;        /* last fetched week (BSS, ~1.4KB)          */
+/* Economic-calendar overlay state, all under s_mtx. s_econ_mode is the field
+ * actually read cross-task (FetchTask / render_current skip painting stock under
+ * the overlay); s_econ_week / s_econ_page are touched only by StockTask but ride
+ * the same lock for brevity. s_econ itself is StockTask-only — written by
+ * render_econ, read straight into LVGL right after — so never read it elsewhere. */
+static bool            s_econ_mode;   /* calendar overlay shown instead of stock  */
+static int             s_econ_week;   /* week offset; cycles within the month     */
+static int             s_econ_page;   /* page within the week (KEY scrolls events) */
+static econ_calendar_t s_econ;        /* last fetched week (BSS, ~7KB)            */
 
 /* Human-readable names for the ui_stock pages, for logging. */
 static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "HOME", "CHART", "NEWS", "METRICS" };
@@ -275,27 +277,44 @@ static void FetchTask(void *arg) {
     }
 }
 
-/* Fetch + paint the economic calendar for the current s_econ_week. Runs in the
- * UI task (StockTask), so that task carries a big stack for the TLS handshake +
- * JSON parse. Paints a "Loading..." frame first, then the events or the error
- * message. The TLS connection to FMP is reused across week navigations. */
-static void render_econ(void) {
-    time_t now = time(NULL);
-    long   tz  = econ_local_tz_off(now);
+/* Pages in the loaded week (>=1; 0 for an invalid/errored week). */
+static int econ_pages(void) {
+    return econ_page_count(s_econ.valid ? s_econ.count : 0);
+}
+
+/* Paint the economic calendar. Runs in the UI task (StockTask), so that task
+ * carries a big stack for the TLS handshake + JSON parse. When `refetch`, pulls
+ * the current s_econ_week from the network (with a "Loading..." frame, TLS reused
+ * across weeks); otherwise it just re-pages the already-fetched week — so KEY
+ * scrolls through this week's events with no network hit. */
+static void render_econ(bool refetch) {
+    if (refetch) {
+        time_t now = time(NULL);
+        long   tz  = econ_local_tz_off(now);
+        state_lock();
+        int wk = s_econ_week;
+        state_unlock();
+
+        char from[12], to[12], label[ECON_LABEL_MAXLEN];
+        econ_week_range(now, tz, wk, from, sizeof from, to, sizeof to, label, sizeof label);
+        if (Lvgl_lock(-1)) { ui_econ_set_loading(label); Lvgl_unlock(); }
+
+        econ_service_fetch(CONFIG_STOCK_FMP_API_KEY, now, tz, wk,
+                           CONFIG_STOCK_ECON_MIN_IMPACT, &s_econ);
+        ESP_LOGI(TAG, "econ wk=%d [%s] valid=%d count=%d/%d %s", wk, s_econ.week_label,
+                 s_econ.valid, s_econ.count, s_econ.total_matched,
+                 s_econ.valid ? "" : s_econ.error);
+    }
+
+    /* Clamp the page into the (possibly new) event count. */
+    int pages = econ_pages();
     state_lock();
-    int wk = s_econ_week;
+    if (s_econ_page >= pages) s_econ_page = pages - 1;
+    if (s_econ_page < 0)      s_econ_page = 0;
+    int page = s_econ_page;
     state_unlock();
 
-    char from[12], to[12], label[ECON_LABEL_MAXLEN];
-    econ_week_range(now, tz, wk, from, sizeof from, to, sizeof to, label, sizeof label);
-    if (Lvgl_lock(-1)) { ui_econ_set_loading(label); Lvgl_unlock(); }
-
-    econ_service_fetch(CONFIG_STOCK_FMP_API_KEY, now, tz, wk,
-                       CONFIG_STOCK_ECON_MIN_IMPACT, &s_econ);
-    ESP_LOGI(TAG, "econ wk=%d [%s] valid=%d count=%d/%d %s", wk, s_econ.week_label,
-             s_econ.valid, s_econ.count, s_econ.total_matched,
-             s_econ.valid ? "" : s_econ.error);
-    if (Lvgl_lock(-1)) { ui_econ_set_calendar(&s_econ); Lvgl_unlock(); }
+    if (Lvgl_lock(-1)) { ui_econ_set_calendar(&s_econ, page); Lvgl_unlock(); }
 }
 
 /* Toggle between the stock view and the economic-calendar overlay (KEY+BOOT). */
@@ -303,13 +322,13 @@ static void toggle_econ(void) {
     state_lock();
     s_econ_mode = !s_econ_mode;
     bool entering = s_econ_mode;
-    if (entering) s_econ_week = 0;     /* always (re)enter on the current week */
+    if (entering) { s_econ_week = 0; s_econ_page = 0; }  /* (re)enter on this week */
     state_unlock();
 
     ESP_LOGI(TAG, "KEY+BOOT -> %s", entering ? "economic calendar" : "stock view");
     if (entering) {
         if (Lvgl_lock(-1)) { ui_econ_show(true); Lvgl_unlock(); }
-        render_econ();
+        render_econ(true);
     } else {
         if (Lvgl_lock(-1)) { ui_econ_show(false); Lvgl_unlock(); }
         render_current();
@@ -318,11 +337,27 @@ static void toggle_econ(void) {
 
 /* Handle one (non-chord) button press, dispatched by the active view. */
 static void handle_press(button_id_t id, int64_t refresh_us) {
-    if (s_econ_mode) {                 /* calendar: KEY = prev week, BOOT = next */
-        state_lock();
-        s_econ_week += (id == BUTTON_USER) ? -1 : +1;
-        state_unlock();
-        render_econ();
+    if (s_econ_mode) {
+        if (id == BUTTON_USER) {       /* KEY: next page of events, cycling in week */
+            int pages = econ_pages();
+            state_lock();
+            s_econ_page = (s_econ_page + 1) % pages;
+            int page = s_econ_page;
+            state_unlock();
+            ESP_LOGI(TAG, "KEY -> econ page %d/%d", page + 1, pages);
+            render_econ(false);        /* re-page only, no network */
+        } else {                       /* BOOT: next week, cycling within the month */
+            time_t now = time(NULL);
+            int wmin, wmax;
+            econ_month_week_span(now, econ_local_tz_off(now), &wmin, &wmax);
+            state_lock();
+            s_econ_week = (s_econ_week >= wmax) ? wmin : s_econ_week + 1;
+            s_econ_page = 0;
+            int wk = s_econ_week;
+            state_unlock();
+            ESP_LOGI(TAG, "BOOT -> econ week offset %d (month %d..%d)", wk, wmin, wmax);
+            render_econ(true);
+        }
         return;
     }
 
@@ -356,7 +391,7 @@ static void handle_press(button_id_t id, int64_t refresh_us) {
  * presses are handled the instant they arrive:
  *   USER (GPIO18) -> next ticker; paints cached data now, fetches only if stale
  *   BOOT (GPIO0)  -> next view (home/chart/news/metrics), pure local page swap
- *   USER+BOOT     -> toggle the economic-calendar overlay (in it: prev/next week)
+ *   USER+BOOT     -> toggle the calendar (in it: KEY=next events, BOOT=next week)
  * Between presses it wakes every HOME_TICK_SECONDS to keep the home clock and
  * battery chip live, and kicks a background refresh of the on-screen ticker on
  * the (slower) REFRESH cadence.

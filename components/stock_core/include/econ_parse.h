@@ -37,6 +37,12 @@ void econ_week_range(time_t now_utc, long tz_off, int week_offset,
                      char *to,   size_t to_sz,
                      char *label, size_t label_sz);
 
+/* Inclusive range of week_offsets whose Mon..Sun week overlaps the calendar
+ * month containing `now` (in the device timezone). Lets the calendar cycle the
+ * BOOT button through just this month's weeks. The current week (offset 0) is
+ * always inside the range, so w_min <= 0 <= w_max. */
+void econ_month_week_span(time_t now_utc, long tz_off, int *w_min, int *w_max);
+
 /* Parse an FMP economics-calendar JSON array into `out`: keep events with
  * impact >= min_impact, convert times to device-local (tz_off), sort ascending
  * by time and keep the earliest ECON_EVENT_MAX (total_matched records the full
