@@ -28,3 +28,8 @@ shots/
 
 # host test/sim run logs
 *.log
+
+# secrets (econ_proxy ECON_PROXY_TOKEN etc.) — never commit; .env.example is the template
+.env
+.env.*
+!.env.example
