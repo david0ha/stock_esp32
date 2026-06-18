@@ -16,13 +16,17 @@
  */
 #include "lvgl.h"
 #include "ui_stock.h"
+#include "ui_econ.h"
 #include "stock_service.h"
+#include "econ_service.h"
+#include "econ_parse.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#include <time.h>
 
 #define HOR 400
 #define VER 300
@@ -161,5 +165,42 @@ int main(int argc, char **argv) {
         write_mono_bmp(path);
         printf("wrote %s\n", path);
     }
+
+    /* Economic-calendar overlay (KEY+BOOT on the device). Renders live data when
+     * FMP_KEY is set, otherwise a canned week through the real parse+render path
+     * so the layout can be checked offline. */
+    ui_econ_create(scr);
+    const char *fmp = getenv("FMP_KEY"); if (!fmp) fmp = "";
+    time_t now = time(NULL);
+    long tz_off = econ_local_tz_off(now);
+
+    econ_calendar_t cal;
+    if (*fmp) {
+        econ_service_fetch(fmp, now, tz_off, 0, ECON_IMPACT_MEDIUM, &cal);
+        printf("[econ] week %s valid=%d count=%d/%d %s\n", cal.week_label,
+               cal.valid, cal.count, cal.total_matched, cal.valid ? "" : cal.error);
+    } else {
+        static const char *SAMPLE =
+            "[{\"date\":\"2026-06-15 12:30:00\",\"country\":\"US\",\"event\":\"CPI YoY\","
+            "\"previous\":3.1,\"estimate\":3.2,\"actual\":3.4,\"impact\":\"High\"},"
+            "{\"date\":\"2026-06-16 02:00:00\",\"country\":\"JP\",\"event\":\"BoJ Interest Rate Decision\","
+            "\"previous\":0.75,\"estimate\":0.75,\"actual\":1.0,\"impact\":\"High\"},"
+            "{\"date\":\"2026-06-17 14:00:00\",\"country\":\"US\",\"event\":\"Fed Interest Rate Decision\","
+            "\"previous\":4.5,\"estimate\":4.5,\"actual\":null,\"impact\":\"High\"},"
+            "{\"date\":\"2026-06-18 08:30:00\",\"country\":\"EU\",\"event\":\"ECB Press Conference\","
+            "\"previous\":null,\"estimate\":null,\"actual\":null,\"impact\":\"High\"},"
+            "{\"date\":\"2026-06-19 06:00:00\",\"country\":\"GB\",\"event\":\"GDP Growth Rate QoQ\","
+            "\"previous\":0.3,\"estimate\":0.4,\"actual\":null,\"impact\":\"High\"}]";
+        econ_parse_calendar(SAMPLE, tz_off, ECON_IMPACT_HIGH, &cal);
+        snprintf(cal.week_label, sizeof(cal.week_label), "06-15 ~ 06-21");
+        printf("[econ] sample week (no FMP_KEY) count=%d\n", cal.count);
+    }
+    ui_econ_set_calendar(&cal);
+    ui_econ_show(true);
+    run_refresh(16);
+    snprintf(path, sizeof(path), "%s/sim_econ.bmp", outdir);
+    write_mono_bmp(path);
+    printf("wrote %s\n", path);
+
     return 0;
 }

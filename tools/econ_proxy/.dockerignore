@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+README.md
+.env
+.env.*
+!.env.example

@@ -1,0 +1,22 @@
+# Run the economic-calendar proxy as a long-lived service:
+#   docker compose up -d        # build + start in the background
+#   docker compose logs -f      # watch requests
+#   docker compose down         # stop
+#
+# Then point the device at  http://<this-host-ip>:8442/economic-calendar
+# (CONFIG_STOCK_ECON_BASE_URL in menuconfig).
+services:
+  econ-proxy:
+    build: .
+    image: econ-proxy
+    container_name: econ-proxy
+    ports:
+      - "8442:8442"          # host:container — change the host side to relocate
+    environment:
+      - PORT=8442
+      # Shared secret. When set, /economic-calendar requires ?apikey=<token>
+      # (set the device's CONFIG_STOCK_FMP_API_KEY to the same value). Leave
+      # empty for an open LAN-only deployment. REQUIRED when exposed publicly
+      # via the Cloudflare tunnel. Provide it from the host env (or a .env file).
+      - ECON_PROXY_TOKEN=${ECON_PROXY_TOKEN:-}
+    restart: unless-stopped
