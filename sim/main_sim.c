@@ -157,6 +157,18 @@ int main(int argc, char **argv) {
     };
     ui_stock_update_env(&env);
 
+    /* Sample economic event so the new "next high-impact" home row renders. */
+    econ_event_t home_ev;
+    memset(&home_ev, 0, sizeof home_ev);
+    snprintf(home_ev.country, sizeof home_ev.country, "%s", "US");
+    snprintf(home_ev.event,   sizeof home_ev.event,   "%s", "Nonfarm Payrolls");
+    home_ev.impact = ECON_IMPACT_HIGH;
+    time_t now_home = time(NULL);
+    home_ev.ts = (int64_t)now_home + 3 * 3600;          /* ~3h out -> "TODAY HH:MM" */
+    char when_home[16];
+    econ_when_label(home_ev.ts, now_home, 0, when_home, sizeof when_home);
+    ui_stock_update_econ(&home_ev, when_home, true);
+
     char path[640];
     for (int p = 0; p < UI_STOCK_PAGE_COUNT; p++) {
         ui_stock_show_page(p);
