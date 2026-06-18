@@ -33,6 +33,8 @@ static struct {
     lv_obj_t *symbol;
     lv_obj_t *price;
     lv_obj_t *change;
+    lv_obj_t *econ_meta;
+    lv_obj_t *econ_name;
     lv_obj_t *temp;
     lv_obj_t *humid;
     lv_obj_t *batt;
@@ -96,6 +98,19 @@ void ui_home_create(lv_obj_t *page) {
     lv_obj_align(S.change, LV_ALIGN_TOP_RIGHT, -16, CHANGE_Y);
 
     rule(page, 170, 12, 2);
+
+    /* next high-impact economic event: caption + bold name */
+    S.econ_meta = mk(page, F_CAP);
+    lv_label_set_text(S.econ_meta, "");
+    lv_obj_align(S.econ_meta, LV_ALIGN_TOP_LEFT, 16, 176);
+
+    S.econ_name = mk(page, F_TEXT);
+    lv_label_set_text(S.econ_name, "");
+    lv_obj_set_width(S.econ_name, W - 32);
+    lv_label_set_long_mode(S.econ_name, LV_LABEL_LONG_DOT);
+    lv_obj_align(S.econ_name, LV_ALIGN_TOP_LEFT, 16, 196);
+
+    rule(page, 240, 12, 2);
 
     /* bottom strip: temp | humidity | battery */
     S.temp = mk(page, F_TEXT);
@@ -170,6 +185,22 @@ void ui_home_set_env(const ui_env_t *env) {
         lv_label_set_text(S.batt, "--");
     }
     lv_obj_align(S.batt, LV_ALIGN_BOTTOM_RIGHT, -24, -38);
+}
+
+void ui_home_set_econ(const econ_event_t *ev, const char *when_label, bool valid) {
+    if (!S.econ_name) return;
+    if (valid && ev && when_label) {
+        char buf[80];
+        /* mono font has no star/middle-dot glyph -> ASCII only */
+        snprintf(buf, sizeof(buf), "%s   %s   ***", when_label, ev->country);
+        lv_label_set_text(S.econ_meta, buf);
+        lv_label_set_text(S.econ_name, ev->event[0] ? ev->event : "--");
+    } else {
+        lv_label_set_text(S.econ_meta, "");
+        lv_label_set_text(S.econ_name, "");
+    }
+    lv_obj_align(S.econ_meta, LV_ALIGN_TOP_LEFT, 16, 176);
+    lv_obj_align(S.econ_name, LV_ALIGN_TOP_LEFT, 16, 196);
 }
 
 void ui_home_tick(void) {

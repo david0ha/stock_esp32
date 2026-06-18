@@ -419,6 +419,10 @@ void ui_stock_update_env(const ui_env_t *env) {
     }
 }
 
+void ui_stock_update_econ(const econ_event_t *ev, const char *when_label, bool valid) {
+    ui_home_set_econ(ev, when_label, valid);
+}
+
 void ui_stock_show_page(int index) {
     if (index < 0 || index >= UI_STOCK_PAGE_COUNT) return;
     if (index == UI_STOCK_PAGE_HOME) ui_home_tick();   /* fresh time on entry */

@@ -13,6 +13,7 @@
 #include "lvgl.h"
 #include "stock_model.h"
 #include "ui_stock.h"   /* ui_env_t */
+#include "econ_model.h" /* econ_event_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,11 @@ void ui_home_set_env(const ui_env_t *env);
 /* Refresh the clock + date from the system time (already local via TZ).
  * Call on each rotation tick and whenever the home page becomes visible. */
 void ui_home_tick(void);
+
+/* Feed the next high-impact economic event into the row below the stock line.
+ * when_label is a caller-formatted relative time ("TODAY 21:30"). Pass
+ * valid=false (ev/when_label ignored) to clear the row. */
+void ui_home_set_econ(const econ_event_t *ev, const char *when_label, bool valid);
 
 #ifdef __cplusplus
 }
