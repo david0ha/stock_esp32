@@ -46,6 +46,14 @@ void econ_week_range(time_t now_utc, long tz_off, int week_offset,
 int econ_parse_calendar(const char *json, long tz_off, int min_impact,
                         econ_calendar_t *out);
 
+/* Index of the first event with ts > now_utc (items are ascending). Returns -1
+ * when none are still upcoming or the calendar is invalid. */
+int econ_next_after(const econ_calendar_t *cal, int64_t now_utc);
+
+/* Device-local relative-day label for `ts`: "TODAY HH:MM" / "TOMORROW HH:MM" /
+ * "<WD> HH:MM" (2..6 days out) / "MM-DD HH:MM". `out` needs >= 16 bytes. */
+void econ_when_label(int64_t ts, time_t now, long tz_off, char *out, size_t n);
+
 #ifdef __cplusplus
 }
 #endif

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
+#include <ctype.h>     /* toupper */
 
 #define SECS_PER_DAY 86400
 
@@ -185,4 +186,42 @@ int econ_parse_calendar(const char *json, long tz_off, int min_impact,
     cJSON_Delete(root);
     out->valid = true;
     return 0;
+}
+
+int econ_next_after(const econ_calendar_t *cal, int64_t now_utc) {
+    if (!cal || !cal->valid) return -1;
+    for (int i = 0; i < cal->count; i++)
+        if (cal->items[i].ts > now_utc) return i;
+    return -1;
+}
+
+void econ_when_label(int64_t ts, time_t now, long tz_off, char *out, size_t n) {
+    if (!out || n == 0) return;
+    time_t ev_local  = (time_t)(ts  + tz_off);
+    time_t now_local = (time_t)(now + tz_off);
+    struct tm evt, nwt;
+    gmtime_r(&ev_local,  &evt);
+    gmtime_r(&now_local, &nwt);
+
+    int64_t ev_day  = days_from_civil(evt.tm_year + 1900, evt.tm_mon + 1, evt.tm_mday);
+    int64_t now_day = days_from_civil(nwt.tm_year + 1900, nwt.tm_mon + 1, nwt.tm_mday);
+    int64_t d = ev_day - now_day;
+
+    char hm[8];
+    strftime(hm, sizeof hm, "%H:%M", &evt);
+
+    if (d == 0) {
+        snprintf(out, n, "TODAY %s", hm);
+    } else if (d == 1) {
+        snprintf(out, n, "TOMORROW %s", hm);
+    } else if (d >= 2 && d <= 6) {
+        char wd[8];
+        strftime(wd, sizeof wd, "%a", &evt);          /* "Mon".."Sun" */
+        for (char *p = wd; *p; ++p) *p = (char)toupper((unsigned char)*p);
+        snprintf(out, n, "%s %s", wd, hm);
+    } else {
+        char md[8];
+        strftime(md, sizeof md, "%m-%d", &evt);
+        snprintf(out, n, "%s %s", md, hm);
+    }
 }
