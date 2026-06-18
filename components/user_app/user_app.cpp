@@ -80,6 +80,11 @@ static prov_config_t s_cfg;
  * spin the SHTC3/ADC for a display that can't change faster than once a minute. */
 #define HOME_TICK_SECONDS 15
 
+/* The home-screen "next high-impact event" row. The High-impact calendar changes
+ * by the day, so an hourly background refresh is plenty; between refreshes the
+ * home tick advances to the next event locally as each one passes (no network). */
+#define ECON_REFRESH_SECONDS 3600
+
 /* Pressing KEY (USER) + BOOT together toggles the economic-calendar view. The
  * two GPIOs fire independent edge events, so on the first event we poll the real
  * pin state (buttons_both_pressed) every CHORD_POLL_MS up to CHORD_WINDOW_MS,
@@ -113,6 +118,13 @@ static int s_page;        /* 0=home, 1=chart, 2=news, 3=metrics (starts home) */
 static bool            s_econ_mode;   /* calendar overlay shown instead of stock */
 static int             s_econ_week;   /* 0 = this week, -1 = previous, +1 = next  */
 static econ_calendar_t s_econ;        /* last fetched week (BSS, ~1.4KB)          */
+
+/* Home-row "next high-impact event" cache, separate from the calendar overlay's
+ * s_econ: this one holds HIGH-only events and is written by EconTask, read by
+ * StockTask's home tick, so it needs its own mutex. Kept in PSRAM. */
+static SemaphoreHandle_t s_home_econ_mtx;
+static econ_calendar_t  *s_home_econ;          /* shared HIGH cache             */
+static econ_calendar_t  *s_home_econ_scratch;  /* EconTask fetch buffer         */
 
 /* Human-readable names for the ui_stock pages, for logging. */
 static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "HOME", "CHART", "NEWS", "METRICS" };
@@ -162,6 +174,28 @@ static void tick_home_env(void) {
     read_env(&env);
     if (Lvgl_lock(-1)) {
         ui_stock_update_env(&env);
+        Lvgl_unlock();
+    }
+}
+
+/* Recompute the "next high-impact event" from the cached HIGH calendar and push
+ * it to the home row. Cheap + local: runs on the home tick so the row advances to
+ * the next event (and TODAY/TOMORROW stays honest) without a network round-trip. */
+static void tick_home_econ(void) {
+    econ_event_t ev;
+    char when[16];
+    bool valid = false;
+    time_t now = time(NULL);
+    long   tz  = econ_local_tz_off(now);
+
+    xSemaphoreTake(s_home_econ_mtx, portMAX_DELAY);
+    int idx = econ_next_after(s_home_econ, (int64_t)now);
+    if (idx >= 0) { ev = s_home_econ->items[idx]; valid = true; }
+    xSemaphoreGive(s_home_econ_mtx);
+
+    if (valid) econ_when_label(ev.ts, now, tz, when, sizeof when);
+    if (Lvgl_lock(-1)) {
+        ui_stock_update_econ(valid ? &ev : nullptr, valid ? when : "", valid);
         Lvgl_unlock();
     }
 }
@@ -275,6 +309,40 @@ static void FetchTask(void *arg) {
     }
 }
 
+/*
+ * EconTask — background fetch of the High-impact economic calendar for the home
+ * row. Never runs on StockTask (which must stay responsive). Pulls this week; if
+ * no High event is still upcoming, pulls next week too. Refreshes hourly; the
+ * home tick does the per-event advance locally between refreshes.
+ */
+static void EconTask(void *arg) {
+    (void)arg;
+    const char *key = CONFIG_STOCK_FMP_API_KEY;
+    for (;;) {
+        time_t now = time(NULL);
+        long   tz  = econ_local_tz_off(now);
+
+        econ_service_fetch(key, now, tz, 0, ECON_IMPACT_HIGH, s_home_econ_scratch);
+        if (s_home_econ_scratch->valid &&
+            econ_next_after(s_home_econ_scratch, (int64_t)now) < 0) {
+            econ_service_fetch(key, now, tz, +1, ECON_IMPACT_HIGH, s_home_econ_scratch);
+        }
+
+        if (s_home_econ_scratch->valid) {
+            xSemaphoreTake(s_home_econ_mtx, portMAX_DELAY);
+            *s_home_econ = *s_home_econ_scratch;          /* commit the good fetch */
+            xSemaphoreGive(s_home_econ_mtx);
+            ESP_LOGI(TAG, "home econ: %d high-impact event(s) (%s)",
+                     s_home_econ->count, s_home_econ->week_label);
+        } else {
+            ESP_LOGW(TAG, "home econ fetch failed: %s", s_home_econ_scratch->error);
+        }
+
+        tick_home_econ();                                /* repaint with new cache */
+        vTaskDelay(pdMS_TO_TICKS(ECON_REFRESH_SECONDS * 1000));
+    }
+}
+
 /* Fetch + paint the economic calendar for the current s_econ_week. Runs in the
  * UI task (StockTask), so that task carries a big stack for the TLS handshake +
  * JSON parse. Paints a "Loading..." frame first, then the events or the error
@@ -381,6 +449,7 @@ static void StockTask(void *arg) {
      * (page 0 = home). The quote stays blank until the first fetch lands. */
     tick_home_env();
     render_current();
+    tick_home_econ();          /* paint the econ row from whatever cache exists */
 
     int64_t last_refresh_us = esp_timer_get_time();
 
@@ -408,6 +477,7 @@ static void StockTask(void *arg) {
 
             /* Idle tick: keep the home clock + sensors current (cheap, local). */
             tick_home_env();
+            tick_home_econ();      /* advance to the next event as each one passes */
 
             /* Refresh the on-screen ticker on the slower network cadence so
              * prices/news stay live without re-downloading every few seconds. */
@@ -440,6 +510,14 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
 
     s_mtx        = xSemaphoreCreateMutex();
     s_fetch_wake = xSemaphoreCreateCounting(PROV_MAX_TICKERS + NUM_FETCHERS, 0);
+
+    /* Home-row econ cache + EconTask scratch (PSRAM, each ~1.4KB). */
+    s_home_econ_mtx     = xSemaphoreCreateMutex();
+    s_home_econ         = (econ_calendar_t *)heap_caps_calloc(1, sizeof(econ_calendar_t),
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_home_econ_scratch = (econ_calendar_t *)heap_caps_malloc(sizeof(econ_calendar_t),
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_home_econ || !s_home_econ_scratch) { ESP_LOGE(TAG, "home econ alloc failed"); return; }
     s_btn_queue  = xQueueCreate(16, sizeof(button_event_t));
     buttons_init(s_btn_queue);
 
@@ -453,4 +531,8 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
      * stack (TLS handshake + JSON parse) like the fetch workers. Higher prio so
      * button presses stay snappy. */
     xTaskCreatePinnedToCore(StockTask, "ui", 16 * 1024, NULL, 4, NULL, 1);
+
+    /* EconTask: background HTTPS/JSON for the home row -> big stack, low prio so
+     * the UI never waits on it. */
+    xTaskCreatePinnedToCore(EconTask, "econ", 16 * 1024, NULL, 2, NULL, 1);
 }
