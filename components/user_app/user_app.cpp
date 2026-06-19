@@ -33,12 +33,20 @@
 #include "user_app.h"      /* prov_config_t */
 #include "lvgl_bsp.h"      /* Lvgl_lock / Lvgl_unlock */
 #include "ui_stock.h"
+#include "ui_home.h"       /* sidebar tickers + weather/forecast feeds */
 #include "ui_econ.h"       /* economic-calendar overlay */
 #include "stock_service.h"
 #include "econ_service.h"  /* FMP economic calendar */
 #include "econ_parse.h"    /* econ_week_range for the loading label */
+#include "weather_service.h" /* Open-Meteo geocoding + forecast */
 #include "buttons.h"       /* USER/BOOT button events */
 #include "board_io.h"      /* SHTC3 / RTC / battery */
+
+/* The portable weather enum (wx_kind_t) is cast straight to the UI's home_wx_t,
+ * so their orders must stay identical. */
+static_assert((int)WX_SUN == (int)HOME_WX_SUN && (int)WX_PARTLY == (int)HOME_WX_PARTLY &&
+              (int)WX_CLOUD == (int)HOME_WX_CLOUD && (int)WX_RAIN == (int)HOME_WX_RAIN,
+              "wx_kind_t and home_wx_t must share an order");
 
 static const char *TAG = "app";
 static lv_obj_t  *s_screen;
@@ -80,6 +88,11 @@ static prov_config_t s_cfg;
  * spin the SHTC3/ADC for a display that can't change faster than once a minute. */
 #define HOME_TICK_SECONDS 15
 
+/* The home-screen "next high-impact event" row. The High-impact calendar changes
+ * by the day, so an hourly background refresh is plenty; between refreshes the
+ * home tick advances to the next event locally as each one passes (no network). */
+#define ECON_REFRESH_SECONDS 3600
+
 /* Pressing KEY (USER) + BOOT together toggles the economic-calendar view. The
  * two GPIOs fire independent edge events, so on the first event we poll the real
  * pin state (buttons_both_pressed) every CHORD_POLL_MS up to CHORD_WINDOW_MS,
@@ -113,6 +126,13 @@ static int s_page;        /* 0=home, 1=chart, 2=news, 3=metrics (starts home) */
 static bool            s_econ_mode;   /* calendar overlay shown instead of stock */
 static int             s_econ_week;   /* 0 = this week, -1 = previous, +1 = next  */
 static econ_calendar_t s_econ;        /* last fetched week (BSS, ~1.4KB)          */
+
+/* Home-row "next high-impact event" cache, separate from the calendar overlay's
+ * s_econ: this one holds HIGH-only events and is written by EconTask, read by
+ * StockTask's home tick, so it needs its own mutex. Kept in PSRAM. */
+static SemaphoreHandle_t s_home_econ_mtx;
+static econ_calendar_t  *s_home_econ;          /* shared HIGH cache             */
+static econ_calendar_t  *s_home_econ_scratch;  /* EconTask fetch buffer         */
 
 /* Human-readable names for the ui_stock pages, for logging. */
 static const char *kPageName[UI_STOCK_PAGE_COUNT] = { "HOME", "CHART", "NEWS", "METRICS" };
@@ -166,6 +186,32 @@ static void tick_home_env(void) {
     }
 }
 
+/* Recompute the "next high-impact event" from the cached HIGH calendar and push
+ * it to the home row. Cheap + local: runs on the home tick so the row advances to
+ * the next event (and TODAY/TOMORROW stays honest) without a network round-trip. */
+static void tick_home_econ(void) {
+    econ_event_t evs[HOME_ECON_MAX];
+    char         whenbuf[HOME_ECON_MAX][16];
+    const char  *whenp[HOME_ECON_MAX];
+    time_t now = time(NULL);
+    long   tz  = econ_local_tz_off(now);
+
+    const econ_event_t *picked[HOME_ECON_MAX];
+    xSemaphoreTake(s_home_econ_mtx, portMAX_DELAY);
+    int n = econ_collect_upcoming(s_home_econ, (int64_t)now, picked, HOME_ECON_MAX);
+    for (int i = 0; i < n; i++) evs[i] = *picked[i];   /* copy out under the lock */
+    xSemaphoreGive(s_home_econ_mtx);
+
+    for (int i = 0; i < n; i++) {
+        econ_when_label(evs[i].ts, now, tz, whenbuf[i], sizeof whenbuf[i]);
+        whenp[i] = whenbuf[i];
+    }
+    if (Lvgl_lock(-1)) {
+        ui_stock_update_econ(evs, whenp, n);
+        Lvgl_unlock();
+    }
+}
+
 /* Paint the currently selected ticker/page from the cache. Holds s_mtx across
  * the LVGL work so a concurrent cache store (FetchTask) can't tear the read;
  * the lock is only ever held for fast in-memory + LVGL ops, never the network. */
@@ -180,6 +226,18 @@ static void render_current(void) {
     bool have = s_valid[idx];
     if (Lvgl_lock(-1)) {
         if (have) ui_stock_update(&s_cache[idx]);   /* else: keep "loading" UI */
+        /* Sidebar watchlist: the first up-to-3 symbols, live from the cache.
+         * Safe to read s_cache here — s_mtx is held across the whole block. */
+        home_ticker_t tk[HOME_TICKERS_MAX];
+        int tn = (int)s_ticker_n; if (tn > HOME_TICKERS_MAX) tn = HOME_TICKERS_MAX;
+        for (int i = 0; i < tn; i++) {
+            const char *sym = prov_config_ticker_at(&s_cfg, (size_t)i);
+            snprintf(tk[i].symbol, sizeof tk[i].symbol, "%s", sym ? sym : "");
+            tk[i].price   = s_cache[i].quote.price;
+            tk[i].percent = s_cache[i].quote.percent;
+            tk[i].valid   = s_valid[i] && s_cache[i].quote.valid;
+        }
+        ui_home_set_tickers(tk, tn);
         ui_stock_show_page(page);
         Lvgl_unlock();
     }
@@ -272,6 +330,99 @@ static void FetchTask(void *arg) {
 
         /* render_current() self-skips while the calendar overlay is up. */
         if (is_current && stored) render_current();
+    }
+}
+
+/*
+ * EconTask — background fetch of the High-impact economic calendar for the home
+ * row. Never runs on StockTask (which must stay responsive). Pulls this week; if
+ * no High event is still upcoming, pulls next week too. Refreshes hourly; the
+ * home tick does the per-event advance locally between refreshes.
+ */
+static void EconTask(void *arg) {
+    (void)arg;
+    const char *key = CONFIG_STOCK_FMP_API_KEY;
+    for (;;) {
+        time_t now = time(NULL);
+        long   tz  = econ_local_tz_off(now);
+
+        econ_service_fetch(key, now, tz, 0, ECON_IMPACT_HIGH, s_home_econ_scratch);
+        if (s_home_econ_scratch->valid &&
+            econ_next_after(s_home_econ_scratch, (int64_t)now) < 0) {
+            econ_service_fetch(key, now, tz, +1, ECON_IMPACT_HIGH, s_home_econ_scratch);
+        }
+
+        if (s_home_econ_scratch->valid) {
+            xSemaphoreTake(s_home_econ_mtx, portMAX_DELAY);
+            *s_home_econ = *s_home_econ_scratch;          /* commit the good fetch */
+            xSemaphoreGive(s_home_econ_mtx);
+            ESP_LOGI(TAG, "home econ: %d high-impact event(s) (%s)",
+                     s_home_econ->count, s_home_econ->week_label);
+        } else {
+            ESP_LOGW(TAG, "home econ fetch failed: %s", s_home_econ_scratch->error);
+        }
+
+        tick_home_econ();                                /* repaint with new cache */
+        vTaskDelay(pdMS_TO_TICKS(ECON_REFRESH_SECONDS * 1000));
+    }
+}
+
+/*
+ * WeatherTask — geocodes the provisioned location once (Open-Meteo, keyless),
+ * then refreshes the current conditions + 7-day forecast on a slow cadence and
+ * pushes them to the home page. Low priority, its own task so the TLS GET never
+ * blocks the UI. Exits immediately when no location was configured.
+ *
+ * The captive portal collects only free text (its SoftAP has no internet to
+ * geocode with), so the resolution to a coordinate — and the on-screen "City,
+ * CC" that confirms the match — happens here, once we are online.
+ */
+#ifndef CONFIG_STOCK_LOCATION
+#define CONFIG_STOCK_LOCATION ""
+#endif
+#define WEATHER_REFRESH_SECONDS 1800   /* 30 min — outdoor weather drifts slowly */
+
+static geo_loc_t s_geo;   /* resolved location (only WeatherTask touches it) */
+
+static void WeatherTask(void *arg) {
+    (void)arg;
+    const char *place = s_cfg.location[0] ? s_cfg.location : CONFIG_STOCK_LOCATION;
+    if (!place[0]) { ESP_LOGI(TAG, "weather: no location set -> widget off"); vTaskDelete(NULL); return; }
+
+    /* Geocode once, retrying a few times in case the network isn't up yet. */
+    bool geo_ok = false;
+    for (int tries = 0; tries < 6 && !geo_ok; tries++) {
+        geo_ok = weather_service_geocode(place, &s_geo);
+        if (!geo_ok) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    if (!geo_ok) { ESP_LOGW(TAG, "weather: geocode failed for '%s'", place); vTaskDelete(NULL); return; }
+
+    char city[64];
+    if (s_geo.country[0]) snprintf(city, sizeof city, "%s, %s", s_geo.name, s_geo.country);
+    else                  snprintf(city, sizeof city, "%s", s_geo.name);
+    ESP_LOGI(TAG, "weather: '%s' -> %s (%.3f, %.3f)", place, city, s_geo.lat, s_geo.lon);
+
+    for (;;) {
+        weather_t w;
+        if (weather_service_fetch(s_geo.lat, s_geo.lon, &w) && w.valid) {
+            home_forecast_t fc[HOME_FORECAST_MAX];
+            int fn = w.day_count; if (fn > HOME_FORECAST_MAX) fn = HOME_FORECAST_MAX;
+            for (int i = 0; i < fn; i++) {
+                snprintf(fc[i].dow, sizeof fc[i].dow, "%s", w.days[i].dow);
+                fc[i].wx = (home_wx_t)w.days[i].wx;
+                fc[i].lo = w.days[i].lo;
+                fc[i].hi = w.days[i].hi;
+            }
+            if (Lvgl_lock(-1)) {
+                if (w.now_valid) ui_home_set_weather((home_wx_t)w.now_wx, w.now_temp_c, city);
+                ui_home_set_forecast(fc, fn);
+                Lvgl_unlock();
+            }
+            ESP_LOGI(TAG, "weather: %d°C now, %d-day forecast", w.now_temp_c, fn);
+        } else {
+            ESP_LOGW(TAG, "weather: fetch failed");
+        }
+        vTaskDelay(pdMS_TO_TICKS(WEATHER_REFRESH_SECONDS * 1000));
     }
 }
 
@@ -381,6 +532,7 @@ static void StockTask(void *arg) {
      * (page 0 = home). The quote stays blank until the first fetch lands. */
     tick_home_env();
     render_current();
+    tick_home_econ();          /* paint the econ row from whatever cache exists */
 
     int64_t last_refresh_us = esp_timer_get_time();
 
@@ -408,6 +560,7 @@ static void StockTask(void *arg) {
 
             /* Idle tick: keep the home clock + sensors current (cheap, local). */
             tick_home_env();
+            tick_home_econ();      /* advance to the next event as each one passes */
 
             /* Refresh the on-screen ticker on the slower network cadence so
              * prices/news stay live without re-downloading every few seconds. */
@@ -440,6 +593,14 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
 
     s_mtx        = xSemaphoreCreateMutex();
     s_fetch_wake = xSemaphoreCreateCounting(PROV_MAX_TICKERS + NUM_FETCHERS, 0);
+
+    /* Home-row econ cache + EconTask scratch (PSRAM, each ~1.4KB). */
+    s_home_econ_mtx     = xSemaphoreCreateMutex();
+    s_home_econ         = (econ_calendar_t *)heap_caps_calloc(1, sizeof(econ_calendar_t),
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_home_econ_scratch = (econ_calendar_t *)heap_caps_malloc(sizeof(econ_calendar_t),
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_home_econ || !s_home_econ_scratch) { ESP_LOGE(TAG, "home econ alloc failed"); return; }
     s_btn_queue  = xQueueCreate(16, sizeof(button_event_t));
     buttons_init(s_btn_queue);
 
@@ -453,4 +614,15 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
      * stack (TLS handshake + JSON parse) like the fetch workers. Higher prio so
      * button presses stay snappy. */
     xTaskCreatePinnedToCore(StockTask, "ui", 16 * 1024, NULL, 4, NULL, 1);
+
+    /* EconTask: background HTTPS/JSON for the home row -> big stack, low prio so
+     * the UI never waits on it. */
+    xTaskCreatePinnedToCore(EconTask, "econ", 16 * 1024, NULL, 2, NULL, 1);
+
+    /* WeatherTask: keyless Open-Meteo geocode + forecast. The JSON is tiny, but
+     * the mbedTLS handshake + cert-bundle validation runs on THIS task's stack
+     * (esp_http_client, synchronous) and is just as heavy as a fetch worker's —
+     * heavier on the first cycle (two hosts, back-to-back handshakes). So match
+     * the proven 16KB the other TLS tasks use; low prio like EconTask. */
+    xTaskCreatePinnedToCore(WeatherTask, "weather", 16 * 1024, NULL, 2, NULL, 1);
 }

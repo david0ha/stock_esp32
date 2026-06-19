@@ -33,12 +33,27 @@ add_executable(sim
     ${CORE}/stock_service.c
     ${CORE}/econ_parse.c
     ${CORE}/econ_service.c
+    ${CORE}/weather_parse.c
+    ${CORE}/weather_service.c
     ${CORE}/ui_stock.c
     ${CORE}/ui_econ.c
+    ${CORE}/ui_icons.c
     ${HOME_SRC}
     ${CORE}/ui_font_black_50.c
     ${CORE}/ui_font_black_26.c
+    ${CORE}/ui_font_mont_bold_46.c
+    ${CORE}/ui_font_mont_bold_20.c
     ${CJSON}/cJSON.c)
 
 target_include_directories(sim PRIVATE ${CORE}/include ${CJSON})
 target_link_libraries(sim lvgl curl m)
+
+# econ_service.c bakes the calendar base URL in at compile time (Kconfig on the
+# device). For the sim, inject it from the environment so a local .env can point
+# at the free investing.com proxy: `export CONFIG_STOCK_ECON_BASE_URL=...` before
+# configuring. Unset -> econ_service.c's FMP default.
+if(NOT "$ENV{CONFIG_STOCK_ECON_BASE_URL}" STREQUAL "")
+    target_compile_definitions(sim PRIVATE
+        CONFIG_STOCK_ECON_BASE_URL="$ENV{CONFIG_STOCK_ECON_BASE_URL}")
+    message(STATUS "sim econ base URL = $ENV{CONFIG_STOCK_ECON_BASE_URL}")
+endif()

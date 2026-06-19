@@ -143,6 +143,18 @@
         <div class="hint" id="tickerHint">Separate symbols with commas — e.g. AAPL, MSFT.</div>
       </div>
     </div>
+
+    <div class="card">
+      <h2>Weather</h2>
+      <div class="field">
+        <label for="location">Location</label>
+        <!-- Just a place name — the display looks up the coordinates itself once it is
+             online and shows the matched "City, CC" back on screen as confirmation. -->
+        <input class="input" id="location" name="location" value="{{LOCATION}}"
+               placeholder="Seoul" autocomplete="off" spellcheck="false" maxlength="48">
+        <div class="hint">City or "City, Country" — e.g. Seoul, Paris, or Austin, US. Leave blank to hide weather.</div>
+      </div>
+    </div>
   </form>
 </div>
 

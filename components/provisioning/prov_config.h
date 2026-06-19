@@ -9,12 +9,18 @@
 #define PROV_PASS_MAX_LEN     64   // WPA2 passphrase limit
 #define PROV_TICKER_MAX_LEN   12   // per-symbol character cap
 #define PROV_MAX_TICKERS      16   // how many symbols we keep
+#define PROV_LOCATION_MAX_LEN 48   // free-text weather location ("Seoul", "Paris, FR")
 
 typedef struct {
     char   ssid[PROV_SSID_MAX_LEN + 1];
     char   password[PROV_PASS_MAX_LEN + 1];
     char   tickers[PROV_MAX_TICKERS][PROV_TICKER_MAX_LEN + 1];
     size_t ticker_count;
+    // Free-text place the user typed for weather. The device geocodes it to a
+    // coordinate (Open-Meteo) once online — the portal/AP has no internet to do
+    // so itself — and shows the resolved "City, CC" as confirmation. Empty -> no
+    // weather widget.
+    char   location[PROV_LOCATION_MAX_LEN + 1];
 } prov_config_t;
 
 #ifdef __cplusplus
