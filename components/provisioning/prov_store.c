@@ -33,6 +33,9 @@ bool prov_store_load(prov_config_t *cfg)
         prov_tickers_parse(cfg, csv);
     }
 
+    len = sizeof(cfg->location);
+    nvs_get_str(h, "loc", cfg->location, &len);
+
     nvs_close(h);
     return cfg->ssid[0] != '\0';
 }
@@ -52,6 +55,7 @@ bool prov_store_save(const prov_config_t *cfg)
     nvs_set_str(h, "ssid", cfg->ssid);
     nvs_set_str(h, "pass", cfg->password);
     nvs_set_str(h, "tickers", csv);
+    nvs_set_str(h, "loc", cfg->location);
 
     err = nvs_commit(h);
     nvs_close(h);
@@ -59,7 +63,7 @@ bool prov_store_save(const prov_config_t *cfg)
         ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
         return false;
     }
-    ESP_LOGI(TAG, "saved ssid='%s' tickers='%s'", cfg->ssid, csv);
+    ESP_LOGI(TAG, "saved ssid='%s' tickers='%s' loc='%s'", cfg->ssid, csv, cfg->location);
     return true;
 }
 

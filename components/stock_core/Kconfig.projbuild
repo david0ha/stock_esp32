@@ -57,6 +57,15 @@ config STOCK_REFRESH_SECONDS
       >= 10s to respect free-tier API rate limits. Navigation is button-driven
       (USER = next ticker, BOOT = next view), not timed rotation.
 
+config STOCK_LOCATION
+    string "Fallback weather location"
+    default ""
+    help
+      Used only when no weather location was entered in the captive-portal setup.
+      Free text resolved on-device to a coordinate via the free, keyless
+      Open-Meteo geocoding API — a city ("Seoul") or "City, Country" ("Austin, US").
+      Leave empty to hide the weather widget until provisioned.
+
 config STOCK_TIMEZONE
     string "Home-screen timezone (POSIX TZ)"
     default "KST-9"

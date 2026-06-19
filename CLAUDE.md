@@ -63,6 +63,7 @@ SD `CMD=21, CLK=38, D0=39` · UART0 `TX=43, RX=44`. 전체는 [docs/pinout.md](d
 - [docs/examples.md](docs/examples.md) — `examples/`에 등록된 참고 예제(서브모듈) 설명
 - [docs/graphics.md](docs/graphics.md) — 1-bit 그래픽 렌더링 방식(즉시모드 GFX vs LVGL) 및 선택 가이드
 - [docs/simulator.md](docs/simulator.md) — 보드 없이 LVGL UI를 확인하는 데스크톱 시뮬레이터(`sim/`)
+- [docs/weather.md](docs/weather.md) — 홈 날씨/예보 위젯(무료·키 불필요 Open-Meteo) + 포털 지역명 입력·지오코딩 흐름
 - [docs/econ-proxy-deployment.md](docs/econ-proxy-deployment.md) — 경제 캘린더 프록시(`tools/econ_proxy`, 포트 8442) 배포·검토 가이드(Mac mini/리눅스 VM)
 - [docs/references.md](docs/references.md) — 공식 문서/데이터시트 링크
 

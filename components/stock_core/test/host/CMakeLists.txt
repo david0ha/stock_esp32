@@ -89,8 +89,28 @@ if(SANITIZE)
     target_link_options(test_econ_service PRIVATE -fsanitize=address,undefined)
 endif()
 
+# weather parse (Open-Meteo geocoding + forecast)
+add_executable(test_weather
+    test_weather.c
+    ${CORE}/weather_parse.c
+    ${CJSON}/cJSON.c)
+
+target_include_directories(test_weather PRIVATE
+    ${CORE}/include
+    ${CJSON})
+
+target_compile_definitions(test_weather PRIVATE FIXDIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+target_compile_options(test_weather PRIVATE -Wall -Wextra -O0 -g)
+target_link_libraries(test_weather m)
+
+if(SANITIZE)
+    target_compile_options(test_weather PRIVATE -fsanitize=address,undefined)
+    target_link_options(test_weather PRIVATE -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_test(NAME parse COMMAND test_parse)
 add_test(NAME service COMMAND test_service)
 add_test(NAME econ COMMAND test_econ)
 add_test(NAME econ_service COMMAND test_econ_service)
+add_test(NAME weather COMMAND test_weather)
