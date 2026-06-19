@@ -16,6 +16,7 @@
  */
 #include "lvgl.h"
 #include "ui_stock.h"
+#include "ui_home.h"
 #include "ui_econ.h"
 #include "stock_service.h"
 #include "econ_service.h"
@@ -103,6 +104,18 @@ static void synth_series(stock_series_t *s, const char *sym, double anchor, doub
 int main(int argc, char **argv) {
     const char *outdir = (argc > 1) ? argv[1] : "shots";
     const char *symbol = getenv("STOCK_SYMBOL"); if (!symbol || !*symbol) symbol = "AAPL";
+    /* STOCK_SYMBOL may be a comma-separated watchlist (the firmware splits it into
+     * tickers); the sim renders one symbol, so take the first token. */
+    char sym1[16];
+    {
+        while (*symbol == ' ') symbol++;
+        const char *comma = strchr(symbol, ',');
+        size_t n = comma ? (size_t)(comma - symbol) : strlen(symbol);
+        while (n > 0 && symbol[n - 1] == ' ') n--;
+        if (n >= sizeof sym1) n = sizeof sym1 - 1;
+        memcpy(sym1, symbol, n); sym1[n] = '\0';
+        if (sym1[0]) symbol = sym1;
+    }
     const char *key    = getenv("FINNHUB_KEY");   if (!key) key = "";
 
     lv_init();
@@ -152,22 +165,68 @@ int main(int argc, char **argv) {
 
     /* Sample environment so temp/humidity/battery render on the home card. */
     ui_env_t env = {
-        .env_valid = true, .temp_c = 23.5f, .humidity = 45.0f,
-        .battery_valid = true, .battery_pct = 84, .battery_v = 4.01f,
+        .env_valid = true, .temp_c = 22.0f, .humidity = 45.0f,
+        .battery_valid = true, .battery_pct = 85, .battery_v = 4.01f,
     };
     ui_stock_update_env(&env);
 
-    /* Sample economic event so the new "next high-impact" home row renders. */
-    econ_event_t home_ev;
-    memset(&home_ev, 0, sizeof home_ev);
-    snprintf(home_ev.country, sizeof home_ev.country, "%s", "US");
-    snprintf(home_ev.event,   sizeof home_ev.event,   "%s", "Nonfarm Payrolls");
-    home_ev.impact = ECON_IMPACT_HIGH;
+    /* Dashboard sample content (watchlist + weather) for design comparison —
+     * no live source for these yet, so they mirror the reference desk render. */
+    home_ticker_t tks[3] = {
+        { "AAPL", 173.50, +1.25, true },
+        { "TSLA", 212.10, -0.50, true },
+        { "MSFT", 330.11, +0.80, true },
+    };
+    ui_home_set_tickers(tks, 3);
+    ui_home_set_weather(HOME_WX_SUN, 24, "Seoul, KR");
+    home_forecast_t fc[7] = {
+        { "FRI", HOME_WX_PARTLY, 15, 22 },
+        { "SAT", HOME_WX_SUN,    16, 24 },
+        { "SUN", HOME_WX_CLOUD,  14, 20 },
+        { "MON", HOME_WX_RAIN,   12, 17 },
+        { "TUE", HOME_WX_SUN,    14, 21 },
+        { "WED", HOME_WX_PARTLY, 15, 22 },
+        { "THU", HOME_WX_SUN,    16, 24 },
+    };
+    ui_home_set_forecast(fc, 7);
+
+    /* "Next high-impact" home row. With FMP_KEY set, fetch the real HIGH-only
+     * calendar (this week, then next week if nothing high is still upcoming) and
+     * push the next event — exactly what EconTask + the home tick do on-device.
+     * Falls back to a sample when there's no key / nothing upcoming so the row
+     * always renders. */
     time_t now_home = time(NULL);
-    home_ev.ts = (int64_t)now_home + 3 * 3600;          /* ~3h out -> "TODAY HH:MM" */
-    char when_home[16];
-    econ_when_label(home_ev.ts, now_home, 0, when_home, sizeof when_home);
-    ui_stock_update_econ(&home_ev, when_home, true);
+    long   tz_home  = econ_local_tz_off(now_home);
+    char   when_home[16];
+    const char *home_fmp = getenv("FMP_KEY"); if (!home_fmp) home_fmp = "";
+    econ_calendar_t home_cal;
+    int home_idx = -1;
+    if (*home_fmp) {
+        econ_service_fetch(home_fmp, now_home, tz_home, 0, ECON_IMPACT_HIGH, &home_cal);
+        if (home_cal.valid && econ_next_after(&home_cal, (int64_t)now_home) < 0)
+            econ_service_fetch(home_fmp, now_home, tz_home, +1, ECON_IMPACT_HIGH, &home_cal);
+        if (home_cal.valid) home_idx = econ_next_after(&home_cal, (int64_t)now_home);
+        printf("[home econ] valid=%d count=%d next_idx=%d %s\n", home_cal.valid,
+               home_cal.count, home_idx, home_cal.valid ? "" : home_cal.error);
+    }
+    if (home_idx >= 0) {
+        const econ_event_t *ev = &home_cal.items[home_idx];
+        econ_when_label(ev->ts, now_home, tz_home, when_home, sizeof when_home);
+        ui_stock_update_econ(ev, when_home, true);
+        printf("[home econ] next: %s  %s  (%s)\n", when_home, ev->event, ev->country);
+    } else {
+        econ_event_t home_ev;
+        memset(&home_ev, 0, sizeof home_ev);
+        snprintf(home_ev.country,  sizeof home_ev.country,  "%s", "US");
+        snprintf(home_ev.event,    sizeof home_ev.event,    "%s", "US Core CPI YoY");
+        snprintf(home_ev.estimate, sizeof home_ev.estimate, "%s", "3.2%");
+        snprintf(home_ev.actual,   sizeof home_ev.actual,   "%s", "3.1%");
+        home_ev.impact = ECON_IMPACT_HIGH;
+        home_ev.ts = (int64_t)now_home + 3 * 3600;      /* ~3h out -> "TODAY HH:MM" */
+        econ_when_label(home_ev.ts, now_home, 0, when_home, sizeof when_home);
+        ui_stock_update_econ(&home_ev, when_home, true);
+        printf("[home econ] sample fallback (no FMP_KEY or nothing upcoming)\n");
+    }
 
     char path[640];
     for (int p = 0; p < UI_STOCK_PAGE_COUNT; p++) {

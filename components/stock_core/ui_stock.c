@@ -336,8 +336,14 @@ static void build_dots(lv_obj_t *parent) {
 }
 
 static void refresh_dots(void) {
-    for (int i = 0; i < UI_STOCK_PAGE_COUNT; i++)
+    /* The home dashboard fills the whole panel and shows no dots; the rotating
+     * stock pages get the indicator. */
+    bool home = (S.cur_page == UI_STOCK_PAGE_HOME);
+    for (int i = 0; i < UI_STOCK_PAGE_COUNT; i++) {
+        if (home) lv_obj_add_flag(S.dot[i], LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_clear_flag(S.dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_opa(S.dot[i], i == S.cur_page ? 255 : 0, 0);
+    }
 }
 
 /* ---- public API --------------------------------------------------------- */
