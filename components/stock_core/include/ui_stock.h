@@ -42,7 +42,7 @@ typedef struct {
 void ui_stock_create(lv_obj_t *parent);
 void ui_stock_update(const stock_data_t *data);     /* stock data -> top bar + pages 1..3 */
 void ui_stock_update_env(const ui_env_t *env);      /* sensors -> home page + battery chip */
-void ui_stock_update_econ(const econ_event_t *ev, const char *when_label, bool valid);
+void ui_stock_update_econ(const econ_event_t *evs, const char *const *when_labels, int n);
 void ui_stock_show_page(int index);                 /* 0..UI_STOCK_PAGE_COUNT-1 */
 
 #ifdef __cplusplus

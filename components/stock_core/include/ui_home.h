@@ -45,6 +45,7 @@ typedef struct {
 
 #define HOME_TICKERS_MAX  3
 #define HOME_FORECAST_MAX 7
+#define HOME_ECON_MAX     3   /* nearest upcoming econ events shown on the home row */
 
 /* Build the home page contents under `page` (a full-screen 400x300 container). */
 void ui_home_create(lv_obj_t *page);
@@ -70,10 +71,11 @@ void ui_home_set_env(const ui_env_t *env);
  * Call on each rotation tick and whenever the home page becomes visible. */
 void ui_home_tick(void);
 
-/* Feed the next high-impact economic event into the row below the stock line.
- * when_label is a caller-formatted relative time ("TODAY 21:30"). Pass
- * valid=false (ev/when_label ignored) to clear the row. */
-void ui_home_set_econ(const econ_event_t *ev, const char *when_label, bool valid);
+/* Feed the nearest upcoming economic events into the rows below the forecast.
+ * `evs`/`when_labels` are parallel arrays of length `n` (0..HOME_ECON_MAX);
+ * when_labels[i] is a caller-formatted relative time ("TODAY 21:30"). Pass n=0
+ * (evs/when_labels ignored) to clear the rows. */
+void ui_home_set_econ(const econ_event_t *evs, const char *const *when_labels, int n);
 
 #ifdef __cplusplus
 }

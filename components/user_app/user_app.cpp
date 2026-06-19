@@ -33,12 +33,20 @@
 #include "user_app.h"      /* prov_config_t */
 #include "lvgl_bsp.h"      /* Lvgl_lock / Lvgl_unlock */
 #include "ui_stock.h"
+#include "ui_home.h"       /* sidebar tickers + weather/forecast feeds */
 #include "ui_econ.h"       /* economic-calendar overlay */
 #include "stock_service.h"
 #include "econ_service.h"  /* FMP economic calendar */
 #include "econ_parse.h"    /* econ_week_range for the loading label */
+#include "weather_service.h" /* Open-Meteo geocoding + forecast */
 #include "buttons.h"       /* USER/BOOT button events */
 #include "board_io.h"      /* SHTC3 / RTC / battery */
+
+/* The portable weather enum (wx_kind_t) is cast straight to the UI's home_wx_t,
+ * so their orders must stay identical. */
+static_assert((int)WX_SUN == (int)HOME_WX_SUN && (int)WX_PARTLY == (int)HOME_WX_PARTLY &&
+              (int)WX_CLOUD == (int)HOME_WX_CLOUD && (int)WX_RAIN == (int)HOME_WX_RAIN,
+              "wx_kind_t and home_wx_t must share an order");
 
 static const char *TAG = "app";
 static lv_obj_t  *s_screen;
@@ -182,20 +190,24 @@ static void tick_home_env(void) {
  * it to the home row. Cheap + local: runs on the home tick so the row advances to
  * the next event (and TODAY/TOMORROW stays honest) without a network round-trip. */
 static void tick_home_econ(void) {
-    econ_event_t ev;
-    char when[16];
-    bool valid = false;
+    econ_event_t evs[HOME_ECON_MAX];
+    char         whenbuf[HOME_ECON_MAX][16];
+    const char  *whenp[HOME_ECON_MAX];
     time_t now = time(NULL);
     long   tz  = econ_local_tz_off(now);
 
+    const econ_event_t *picked[HOME_ECON_MAX];
     xSemaphoreTake(s_home_econ_mtx, portMAX_DELAY);
-    int idx = econ_next_after(s_home_econ, (int64_t)now);
-    if (idx >= 0) { ev = s_home_econ->items[idx]; valid = true; }
+    int n = econ_collect_upcoming(s_home_econ, (int64_t)now, picked, HOME_ECON_MAX);
+    for (int i = 0; i < n; i++) evs[i] = *picked[i];   /* copy out under the lock */
     xSemaphoreGive(s_home_econ_mtx);
 
-    if (valid) econ_when_label(ev.ts, now, tz, when, sizeof when);
+    for (int i = 0; i < n; i++) {
+        econ_when_label(evs[i].ts, now, tz, whenbuf[i], sizeof whenbuf[i]);
+        whenp[i] = whenbuf[i];
+    }
     if (Lvgl_lock(-1)) {
-        ui_stock_update_econ(valid ? &ev : nullptr, valid ? when : "", valid);
+        ui_stock_update_econ(evs, whenp, n);
         Lvgl_unlock();
     }
 }
@@ -214,6 +226,18 @@ static void render_current(void) {
     bool have = s_valid[idx];
     if (Lvgl_lock(-1)) {
         if (have) ui_stock_update(&s_cache[idx]);   /* else: keep "loading" UI */
+        /* Sidebar watchlist: the first up-to-3 symbols, live from the cache.
+         * Safe to read s_cache here — s_mtx is held across the whole block. */
+        home_ticker_t tk[HOME_TICKERS_MAX];
+        int tn = (int)s_ticker_n; if (tn > HOME_TICKERS_MAX) tn = HOME_TICKERS_MAX;
+        for (int i = 0; i < tn; i++) {
+            const char *sym = prov_config_ticker_at(&s_cfg, (size_t)i);
+            snprintf(tk[i].symbol, sizeof tk[i].symbol, "%s", sym ? sym : "");
+            tk[i].price   = s_cache[i].quote.price;
+            tk[i].percent = s_cache[i].quote.percent;
+            tk[i].valid   = s_valid[i] && s_cache[i].quote.valid;
+        }
+        ui_home_set_tickers(tk, tn);
         ui_stock_show_page(page);
         Lvgl_unlock();
     }
@@ -340,6 +364,65 @@ static void EconTask(void *arg) {
 
         tick_home_econ();                                /* repaint with new cache */
         vTaskDelay(pdMS_TO_TICKS(ECON_REFRESH_SECONDS * 1000));
+    }
+}
+
+/*
+ * WeatherTask — geocodes the provisioned location once (Open-Meteo, keyless),
+ * then refreshes the current conditions + 7-day forecast on a slow cadence and
+ * pushes them to the home page. Low priority, its own task so the TLS GET never
+ * blocks the UI. Exits immediately when no location was configured.
+ *
+ * The captive portal collects only free text (its SoftAP has no internet to
+ * geocode with), so the resolution to a coordinate — and the on-screen "City,
+ * CC" that confirms the match — happens here, once we are online.
+ */
+#ifndef CONFIG_STOCK_LOCATION
+#define CONFIG_STOCK_LOCATION ""
+#endif
+#define WEATHER_REFRESH_SECONDS 1800   /* 30 min — outdoor weather drifts slowly */
+
+static geo_loc_t s_geo;   /* resolved location (only WeatherTask touches it) */
+
+static void WeatherTask(void *arg) {
+    (void)arg;
+    const char *place = s_cfg.location[0] ? s_cfg.location : CONFIG_STOCK_LOCATION;
+    if (!place[0]) { ESP_LOGI(TAG, "weather: no location set -> widget off"); vTaskDelete(NULL); return; }
+
+    /* Geocode once, retrying a few times in case the network isn't up yet. */
+    bool geo_ok = false;
+    for (int tries = 0; tries < 6 && !geo_ok; tries++) {
+        geo_ok = weather_service_geocode(place, &s_geo);
+        if (!geo_ok) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    if (!geo_ok) { ESP_LOGW(TAG, "weather: geocode failed for '%s'", place); vTaskDelete(NULL); return; }
+
+    char city[64];
+    if (s_geo.country[0]) snprintf(city, sizeof city, "%s, %s", s_geo.name, s_geo.country);
+    else                  snprintf(city, sizeof city, "%s", s_geo.name);
+    ESP_LOGI(TAG, "weather: '%s' -> %s (%.3f, %.3f)", place, city, s_geo.lat, s_geo.lon);
+
+    for (;;) {
+        weather_t w;
+        if (weather_service_fetch(s_geo.lat, s_geo.lon, &w) && w.valid) {
+            home_forecast_t fc[HOME_FORECAST_MAX];
+            int fn = w.day_count; if (fn > HOME_FORECAST_MAX) fn = HOME_FORECAST_MAX;
+            for (int i = 0; i < fn; i++) {
+                snprintf(fc[i].dow, sizeof fc[i].dow, "%s", w.days[i].dow);
+                fc[i].wx = (home_wx_t)w.days[i].wx;
+                fc[i].lo = w.days[i].lo;
+                fc[i].hi = w.days[i].hi;
+            }
+            if (Lvgl_lock(-1)) {
+                if (w.now_valid) ui_home_set_weather((home_wx_t)w.now_wx, w.now_temp_c, city);
+                ui_home_set_forecast(fc, fn);
+                Lvgl_unlock();
+            }
+            ESP_LOGI(TAG, "weather: %d°C now, %d-day forecast", w.now_temp_c, fn);
+        } else {
+            ESP_LOGW(TAG, "weather: fetch failed");
+        }
+        vTaskDelay(pdMS_TO_TICKS(WEATHER_REFRESH_SECONDS * 1000));
     }
 }
 
@@ -535,4 +618,11 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
     /* EconTask: background HTTPS/JSON for the home row -> big stack, low prio so
      * the UI never waits on it. */
     xTaskCreatePinnedToCore(EconTask, "econ", 16 * 1024, NULL, 2, NULL, 1);
+
+    /* WeatherTask: keyless Open-Meteo geocode + forecast. The JSON is tiny, but
+     * the mbedTLS handshake + cert-bundle validation runs on THIS task's stack
+     * (esp_http_client, synchronous) and is just as heavy as a fetch worker's —
+     * heavier on the first cycle (two hosts, back-to-back handshakes). So match
+     * the proven 16KB the other TLS tasks use; low prio like EconTask. */
+    xTaskCreatePinnedToCore(WeatherTask, "weather", 16 * 1024, NULL, 2, NULL, 1);
 }

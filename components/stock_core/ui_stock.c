@@ -425,8 +425,8 @@ void ui_stock_update_env(const ui_env_t *env) {
     }
 }
 
-void ui_stock_update_econ(const econ_event_t *ev, const char *when_label, bool valid) {
-    ui_home_set_econ(ev, when_label, valid);
+void ui_stock_update_econ(const econ_event_t *evs, const char *const *when_labels, int n) {
+    ui_home_set_econ(evs, when_labels, n);
 }
 
 void ui_stock_show_page(int index) {

@@ -41,10 +41,10 @@
 
 #define F_CLOCK (&ui_font_mont_bold_46)      /* hero clock            */
 #define F_SYM   (&ui_font_mont_bold_20)      /* sidebar symbol        */
-#define F_ECON  (&ui_font_mont_bold_16)      /* econ event name (bold)*/
 #define F_BIG   (&lv_font_montserrat_20)     /* weather temp / status */
 #define F_MED   (&lv_font_montserrat_16)     /* price, date           */
 #define F_SML   (&lv_font_montserrat_14)     /* change, city, captions*/
+#define F_TINY  (&lv_font_montserrat_12)     /* dense econ rows        */
 
 static const lv_color_t BLACK = LV_COLOR_MAKE(0, 0, 0);
 static const lv_color_t WHITE = LV_COLOR_MAKE(0xff, 0xff, 0xff);
@@ -58,8 +58,9 @@ static struct {
     /* forecast columns */
     struct { lv_obj_t *dow, *icon, *temp; } fc[HOME_FORECAST_MAX];
     home_wx_t fc_wx[HOME_FORECAST_MAX];
-    /* econ */
-    lv_obj_t *econ_name, *econ_vals;
+    /* econ: nearest upcoming events, one full-width row each (event name on the
+     * left, est/act on the right). */
+    struct { lv_obj_t *name, *val; } ec[HOME_ECON_MAX];
     /* status */
     lv_obj_t *humid, *temp_in, *batt, *batt_icon;
 } S;
@@ -211,21 +212,36 @@ static void build_forecast(lv_obj_t *p) {
     }
 }
 
-/* ---- econ row ----------------------------------------------------------- */
+/* ---- econ rows ---------------------------------------------------------- */
+
+#define EC_X    MX          /* full-width: text starts at the main-area edge */
+#define EC_Y0   193         /* first row's top y                          */
+#define EC_DY   17          /* row pitch (3 rows fit the 188..246 band)   */
+#define EC_VALW 58          /* right-aligned estimate/actual column width  */
+
+/* A one-line label that ellipsizes on overflow: DOT mode only truncates (rather
+ * than wrapping and growing) when the height is pinned to a single line. The
+ * dense 12px font lets a long event name fit before it ever needs the dots. */
+static lv_obj_t *eline(lv_obj_t *p, int w) {
+    lv_obj_t *l = lbl(p, F_TINY);
+    lv_obj_set_width(l, w);
+    lv_obj_set_height(l, lv_font_get_line_height(F_TINY));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_label_set_text(l, "");
+    return l;
+}
 
 static void build_econ(lv_obj_t *p) {
-    lv_obj_t *mega = ui_icon(p, ICON_MEGAPHONE, 24, 0);
-    lv_obj_align(mega, LV_ALIGN_TOP_LEFT, MX, 196);
+    for (int i = 0; i < HOME_ECON_MAX; i++) {
+        int y = EC_Y0 + i * EC_DY;
 
-    S.econ_name = lbl(p, F_ECON);
-    lv_label_set_text(S.econ_name, "");
-    clamp(S.econ_name, RX - (MX + 34));
-    lv_obj_align(S.econ_name, LV_ALIGN_TOP_LEFT, MX + 34, 195);
+        S.ec[i].name = eline(p, RX - EC_X - EC_VALW - 6);
+        lv_obj_align(S.ec[i].name, LV_ALIGN_TOP_LEFT, EC_X, y);
 
-    S.econ_vals = lbl(p, F_SML);
-    lv_label_set_text(S.econ_vals, "");
-    clamp(S.econ_vals, RX - (MX + 34));
-    lv_obj_align(S.econ_vals, LV_ALIGN_TOP_LEFT, MX + 34, 219);
+        S.ec[i].val = eline(p, EC_VALW);
+        lv_obj_set_style_text_align(S.ec[i].val, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_align(S.ec[i].val, LV_ALIGN_TOP_RIGHT, -(W - RX), y);
+    }
 }
 
 /* ---- status bar --------------------------------------------------------- */
@@ -375,25 +391,46 @@ void ui_home_set_env(const ui_env_t *env) {
     }
 }
 
-void ui_home_set_econ(const econ_event_t *ev, const char *when_label, bool valid) {
-    if (!S.econ_name) return;
-    if (valid && ev && when_label) {
-        char buf[96];
-        /* The reference shows just the time for today's event; keep the day
-         * prefix only when the event is not today, so the bold name fits. */
-        const char *when = when_label;
-        if (strncmp(when, "TODAY ", 6) == 0) when += 6;
-        snprintf(buf, sizeof(buf), "[%s] %s", when, ev->event[0] ? ev->event : "--");
-        lv_label_set_text(S.econ_name, buf);
-        snprintf(buf, sizeof(buf), "Expected: %s   |   Actual: %s",
-                 ev->estimate, ev->actual);
-        lv_label_set_text(S.econ_vals, buf);
-    } else {
-        lv_label_set_text(S.econ_name, "");
-        lv_label_set_text(S.econ_vals, "");
+void ui_home_set_econ(const econ_event_t *evs, const char *const *when_labels, int n) {
+    if (!S.ec[0].name) return;
+    if (!evs || !when_labels) n = 0;
+    if (n > HOME_ECON_MAX) n = HOME_ECON_MAX;
+    if (n < 0) n = 0;
+
+    for (int i = 0; i < n; i++) {
+        const econ_event_t *ev = &evs[i];
+        const char *when = when_labels[i] ? when_labels[i] : "";
+        /* Compact the relative-day prefix so the event name keeps the most room:
+         * today -> just the time, tomorrow -> "TMR", weekday/date kept as-is. */
+        char w[20];
+        if (strncmp(when, "TODAY ", 6) == 0)          snprintf(w, sizeof w, "%s", when + 6);
+        else if (strncmp(when, "TOMORROW ", 9) == 0)  snprintf(w, sizeof w, "TMR %s", when + 9);
+        else                                          snprintf(w, sizeof w, "%s", when);
+
+        char buf[80];
+        snprintf(buf, sizeof(buf), "[%s] %s", w, ev->event[0] ? ev->event : "--");
+        lv_label_set_text(S.ec[i].name, buf);
+
+        /* est -> act once the actual is released; otherwise just the estimate.
+         * Plain ASCII so it renders in the stock Montserrat (no arrow glyph). */
+        const char *est = ev->estimate[0] ? ev->estimate : "";
+        const char *act = ev->actual[0] && strcmp(ev->actual, "--") != 0 ? ev->actual : "";
+        if (act[0])
+            snprintf(buf, sizeof(buf), "%s>%s", est[0] ? est : "?", act);
+        else if (est[0])
+            snprintf(buf, sizeof(buf), "%s", est);
+        else
+            buf[0] = '\0';
+        lv_label_set_text(S.ec[i].val, buf);
+
+        lv_obj_clear_flag(S.ec[i].name, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(S.ec[i].val, LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_align(S.econ_name, LV_ALIGN_TOP_LEFT, MX + 34, 195);
-    lv_obj_align(S.econ_vals, LV_ALIGN_TOP_LEFT, MX + 34, 219);
+    /* Hide rows a short feed didn't fill. */
+    for (int i = n; i < HOME_ECON_MAX; i++) {
+        lv_obj_add_flag(S.ec[i].name, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(S.ec[i].val, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void ui_home_tick(void) {

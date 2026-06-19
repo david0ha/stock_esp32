@@ -216,6 +216,45 @@ static void test_next_after(void) {
     CHECK(econ_next_after(&empty, 0) == -1);
 }
 
+static void test_collect_upcoming(void) {
+    printf("test_collect_upcoming\n");
+    char *j = slurp("fmp_econ.json");
+    econ_calendar_t c;
+    /* HIGH-only -> CPI(06-15 12:30), BoJ(06-17 03:00), Fed(06-18 14:00). */
+    CHECK(econ_parse_calendar(j, 0, ECON_IMPACT_HIGH, &c) == 0);
+    free(j);
+
+    const econ_event_t *ev[3];
+
+    /* before everything: the nearest 3 upcoming, in order */
+    int n = econ_collect_upcoming(&c, 0, ev, 3);
+    CHECK(n == 3);
+    CHECK_STR(ev[0]->country, "US");   /* CPI */
+    CHECK_STR(ev[1]->country, "JP");   /* BoJ */
+    CHECK_STR(ev[2]->country, "US");   /* Fed */
+
+    /* cap honored: ask for 2, get the 2 nearest */
+    n = econ_collect_upcoming(&c, 0, ev, 2);
+    CHECK(n == 2);
+    CHECK_STR(ev[1]->country, "JP");
+
+    /* mid-week: CPI is past, only BoJ + Fed remain */
+    time_t tue = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
+    n = econ_collect_upcoming(&c, (int64_t)tue, ev, 3);
+    CHECK(n == 2);
+    CHECK_STR(ev[0]->country, "JP");
+    CHECK_STR(ev[1]->country, "US");
+
+    /* after everything -> none */
+    time_t far = (time_t)econ_ymd_to_epoch(2030, 1, 1, 0, 0, 0);
+    CHECK(econ_collect_upcoming(&c, (int64_t)far, ev, 3) == 0);
+
+    /* empty / invalid calendar -> 0 */
+    econ_calendar_t empty;
+    CHECK(econ_parse_calendar("[]", 0, ECON_IMPACT_HIGH, &empty) == 0);
+    CHECK(econ_collect_upcoming(&empty, 0, ev, 3) == 0);
+}
+
 static void test_when_label(void) {
     printf("test_when_label\n");
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);  /* Tue */
@@ -240,6 +279,7 @@ int main(void) {
     test_impact_from_str();
     test_week_range();
     test_next_after();
+    test_collect_upcoming();
     test_when_label();
     test_parse_high_only();
     test_parse_tz_shift();

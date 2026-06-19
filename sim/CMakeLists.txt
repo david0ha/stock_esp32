@@ -33,6 +33,8 @@ add_executable(sim
     ${CORE}/stock_service.c
     ${CORE}/econ_parse.c
     ${CORE}/econ_service.c
+    ${CORE}/weather_parse.c
+    ${CORE}/weather_service.c
     ${CORE}/ui_stock.c
     ${CORE}/ui_econ.c
     ${CORE}/ui_icons.c
@@ -41,7 +43,6 @@ add_executable(sim
     ${CORE}/ui_font_black_26.c
     ${CORE}/ui_font_mont_bold_46.c
     ${CORE}/ui_font_mont_bold_20.c
-    ${CORE}/ui_font_mont_bold_16.c
     ${CJSON}/cJSON.c)
 
 target_include_directories(sim PRIVATE ${CORE}/include ${CJSON})

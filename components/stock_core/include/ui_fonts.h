@@ -26,7 +26,6 @@ extern const lv_font_t ui_font_black_26;   /* time/date, change, weather values 
  */
 extern const lv_font_t ui_font_mont_bold_46;   /* hero clock          */
 extern const lv_font_t ui_font_mont_bold_20;   /* sidebar symbols     */
-extern const lv_font_t ui_font_mont_bold_16;   /* econ event name     */
 
 #ifdef __cplusplus
 }

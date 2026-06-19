@@ -195,6 +195,17 @@ int econ_next_after(const econ_calendar_t *cal, int64_t now_utc) {
     return -1;
 }
 
+int econ_collect_upcoming(const econ_calendar_t *cal, int64_t now_utc,
+                          const econ_event_t **out, int max) {
+    if (!out || max <= 0) return 0;
+    int idx = econ_next_after(cal, now_utc);
+    if (idx < 0) return 0;
+    int n = 0;
+    for (int i = idx; i < cal->count && n < max; i++)
+        out[n++] = &cal->items[i];
+    return n;
+}
+
 void econ_when_label(int64_t ts, time_t now, long tz_off, char *out, size_t n) {
     if (!out || n == 0) return;
     time_t ev_local  = (time_t)(ts  + tz_off);
