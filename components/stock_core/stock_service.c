@@ -54,9 +54,23 @@ int stock_service_fetch(const char *symbol, const char *finnhub_key,
     char url[URL_MAX];
     char *b;
 
-    /* The three Finnhub requests are issued consecutively (quote, metric, news)
-     * so they share one keep-alive connection — one TLS handshake for all three
-     * — and the single Yahoo request (different host) is fetched last. */
+    /* Order matters for connection reuse. We fetch the single Yahoo request FIRST
+     * and the three Finnhub requests (quote, metric, news) LAST, consecutively.
+     * The three Finnhub calls still share one keep-alive connection (one handshake
+     * for all three), and ending on Finnhub leaves the per-task http client bound
+     * to finnhub.io — the host the frequent quote-only refresh hits next — so that
+     * refresh rides keep-alive at zero handshakes instead of reconnecting from a
+     * Yahoo-bound client every time. */
+
+    /* Yahoo v8 chart — intraday 5m line (different host, fetched first so the
+     * lone host switch happens here, not on the way to the next quote refresh) */
+    snprintf(url, sizeof(url),
+             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m",
+             symbol);
+    if ((b = fetch_body(url))) {
+        if (stock_parse_series(b, &out->series) == 0) ok++;
+        free(b);
+    }
 
     /* Finnhub quote — price / change / % */
     ok += stock_service_fetch_quote(symbol, finnhub_key, out);
@@ -88,15 +102,6 @@ int stock_service_fetch(const char *symbol, const char *finnhub_key,
                 free(b);
             }
         }
-    }
-
-    /* Yahoo v8 chart — intraday 5m line (different host, fetched last) */
-    snprintf(url, sizeof(url),
-             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m",
-             symbol);
-    if ((b = fetch_body(url))) {
-        if (stock_parse_series(b, &out->series) == 0) ok++;
-        free(b);
     }
 
     return ok;

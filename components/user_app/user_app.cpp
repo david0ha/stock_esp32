@@ -36,6 +36,7 @@
 #include "ui_home.h"       /* sidebar tickers + weather/forecast feeds */
 #include "ui_econ.h"       /* economic-calendar overlay */
 #include "stock_service.h"
+#include "http_port.h"     /* http_port_init: TLS-connect gate setup */
 #include "econ_service.h"  /* FMP economic calendar */
 #include "econ_parse.h"    /* econ_week_range for the loading label */
 #include "weather_service.h" /* Open-Meteo geocoding + forecast */
@@ -290,6 +291,13 @@ static void FetchTask(void *arg) {
     stock_data_t *scratch = s_scratch[wid];
     const char   *key     = CONFIG_STOCK_FINNHUB_API_KEY;
 
+    /* Boot stagger: fetch0 at t=0, fetch1 at t=+1.5s. Keeps the two workers' first
+     * TLS handshakes to finnhub off the same instant so only one heavy ECDSA cert
+     * verify pins core 1 at a time -> IDLE1 stays fed -> no boot-burst Task WDT trip.
+     * One-time (before the loop); claim_fetch_target() still serves s_sym_index
+     * first, so the on-screen ticker is fetched first regardless of the offset. */
+    vTaskDelay(pdMS_TO_TICKS(wid * 1500));
+
     for (;;) {
         bool full = true;
         int idx = claim_fetch_target(&full);
@@ -342,6 +350,9 @@ static void FetchTask(void *arg) {
 static void EconTask(void *arg) {
     (void)arg;
     const char *key = CONFIG_STOCK_FMP_API_KEY;
+    /* Boot stagger: start the econ host's first handshake after the stock workers
+     * (~+4s). One-time; the 3600s refresh cadence makes the offset immaterial. */
+    vTaskDelay(pdMS_TO_TICKS(4000));
     for (;;) {
         time_t now = time(NULL);
         long   tz  = econ_local_tz_off(now);
@@ -388,6 +399,11 @@ static void WeatherTask(void *arg) {
     (void)arg;
     const char *place = s_cfg.location[0] ? s_cfg.location : CONFIG_STOCK_LOCATION;
     if (!place[0]) { ESP_LOGI(TAG, "weather: no location set -> widget off"); vTaskDelete(NULL); return; }
+
+    /* Boot stagger: run the geocode+forecast back-to-back handshakes after the
+     * stock/econ tasks (~+6s). One-time; the 1800s cadence makes the offset
+     * immaterial (and geocode already retries for 6×10s if the net isn't up). */
+    vTaskDelay(pdMS_TO_TICKS(6000));
 
     /* Geocode once, retrying a few times in case the network isn't up yet. */
     bool geo_ok = false;
@@ -603,6 +619,10 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
     if (!s_home_econ || !s_home_econ_scratch) { ESP_LOGE(TAG, "home econ alloc failed"); return; }
     s_btn_queue  = xQueueCreate(16, sizeof(button_event_t));
     buttons_init(s_btn_queue);
+
+    /* Create the global TLS-connect gate before any task can call http_get(), so
+     * concurrent first handshakes serialize instead of racing the lazy creation. */
+    http_port_init();
 
     /* FetchTask workers: big stack for the TLS handshake + JSON parsing. */
     for (int i = 0; i < NUM_FETCHERS; i++) {

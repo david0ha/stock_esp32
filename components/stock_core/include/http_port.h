@@ -16,4 +16,17 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Call once before any http_get(), from a single thread, before the fetch tasks
+ * start. Creates the global TLS-connect gate (device port) so concurrent first
+ * handshakes serialize; a no-op where the port needs no gate (simulator). */
+void http_port_init(void);
+
 char *http_get(const char *url, int *out_status);
+
+#ifdef __cplusplus
+}
+#endif

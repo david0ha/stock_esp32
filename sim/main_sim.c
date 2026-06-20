@@ -287,10 +287,10 @@ int main(int argc, char **argv) {
         ui_stock_update_econ(evs, wp, en);
     } else {
         /* Three sample events spread over the next couple of days. */
-        static const struct { const char *cc, *name, *est, *act; int hrs; } S[3] = {
-            { "US", "US Core CPI YoY",   "3.2%",  "3.1%", 3 },
-            { "US", "Fed Rate Decision", "4.50%", "",     27 },
-            { "JP", "BoJ Rate Decision", "0.75%", "",     50 },
+        static const struct { const char *cc, *name, *est, *act, *prev; int hrs; } S[3] = {
+            { "US", "US Core CPI YoY",   "3.2%",  "3.1%", "3.0%",  3 },
+            { "US", "Fed Rate Decision", "4.50%", "",     "4.50%", 27 },
+            { "JP", "BoJ Rate Decision", "0.75%", "",     "0.50%", 50 },
         };
         econ_event_t evs[3];
         char         wb[3][16];
@@ -301,6 +301,7 @@ int main(int argc, char **argv) {
             snprintf(evs[i].event,    sizeof evs[i].event,    "%s", S[i].name);
             snprintf(evs[i].estimate, sizeof evs[i].estimate, "%s", S[i].est);
             snprintf(evs[i].actual,   sizeof evs[i].actual,   "%s", S[i].act);
+            snprintf(evs[i].previous, sizeof evs[i].previous, "%s", S[i].prev);
             evs[i].impact = ECON_IMPACT_HIGH;
             evs[i].ts = (int64_t)now_home + S[i].hrs * 3600;
             econ_when_label(evs[i].ts, now_home, tz_home, wb[i], sizeof wb[i]);
