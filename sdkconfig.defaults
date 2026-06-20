@@ -12,6 +12,8 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FREERTOS_HZ=1000
 # Stock monitor UI fonts (mono panel needs larger Montserrat sizes)
+CONFIG_LV_FONT_MONTSERRAT_10=y
+CONFIG_LV_FONT_MONTSERRAT_12=y
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
@@ -21,3 +23,25 @@ CONFIG_LV_USE_LINE=y
 # Services chain) — not in the IDF full bundle, which only has GlobalSign R3/R6.
 CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="certs/globalsign_root_ca.pem"
+# TLS setup was failing with mbedtls_ssl_setup -0x008D (PSA_ERROR_INSUFFICIENT_MEMORY
+# = MBEDTLS_ERR_SSL_ALLOC_FAILED) on the first HTTPS request: the default INTERNAL_MEM_ALLOC
+# forced all handshake buffers into internal DRAM, which WiFi+lwIP+LVGL had already drained.
+# Allow mbedTLS to spill to PSRAM and right-size/free buffers dynamically.
+CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# Task Watchdog: bump from the 5s default to 10s. On boot the weather/stock/econ
+# tasks all run TLS handshakes at once and contend for the single MPI hardware
+# unit; ECDSA cert verification (mbedtls_mpi_mul_mpi) busy-polls the peripheral
+# (no interrupt path — MBEDTLS_MPI_USE_INTERRUPT only covers RSA exp_mod), so a
+# legitimate handshake under contention can pin a core >5s and trip IDLEn before
+# it finishes. It's a long crypto op, not a hung task (PANIC stays off), so widen
+# the window rather than mask a real stall.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+# TLS client session tickets (RFC 5077): let a reconnect to the SAME host resume
+# the prior session (abbreviated handshake, skips the ECDSA cert-chain verify).
+# Paired with .save_client_session=true in http_port_esp.c. Cheapens the
+# unavoidable reconnects on the slow single-host tasks (econ 1h / weather 30m)
+# whose keep-alive the server drops while idle. Prereq CONFIG_MBEDTLS_CLIENT_SSL_SESSION_TICKETS
+# is already on; TLS1.3 is off so this is the TLS1.2 ticket path. Cert-bundle
+# auth (VERIFY_REQUIRED) is unchanged — a full handshake still validates the chain.
+CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y

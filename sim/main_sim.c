@@ -16,10 +16,12 @@
  */
 #include "lvgl.h"
 #include "ui_stock.h"
+#include "ui_home.h"
 #include "ui_econ.h"
 #include "stock_service.h"
 #include "econ_service.h"
 #include "econ_parse.h"
+#include "weather_service.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,6 +105,18 @@ static void synth_series(stock_series_t *s, const char *sym, double anchor, doub
 int main(int argc, char **argv) {
     const char *outdir = (argc > 1) ? argv[1] : "shots";
     const char *symbol = getenv("STOCK_SYMBOL"); if (!symbol || !*symbol) symbol = "AAPL";
+    /* STOCK_SYMBOL may be a comma-separated watchlist (the firmware splits it into
+     * tickers); the sim renders one symbol, so take the first token. */
+    char sym1[16];
+    {
+        while (*symbol == ' ') symbol++;
+        const char *comma = strchr(symbol, ',');
+        size_t n = comma ? (size_t)(comma - symbol) : strlen(symbol);
+        while (n > 0 && symbol[n - 1] == ' ') n--;
+        if (n >= sizeof sym1) n = sizeof sym1 - 1;
+        memcpy(sym1, symbol, n); sym1[n] = '\0';
+        if (sym1[0]) symbol = sym1;
+    }
     const char *key    = getenv("FINNHUB_KEY");   if (!key) key = "";
 
     lv_init();
@@ -152,10 +166,150 @@ int main(int argc, char **argv) {
 
     /* Sample environment so temp/humidity/battery render on the home card. */
     ui_env_t env = {
-        .env_valid = true, .temp_c = 23.5f, .humidity = 45.0f,
-        .battery_valid = true, .battery_pct = 84, .battery_v = 4.01f,
+        .env_valid = true, .temp_c = 22.0f, .humidity = 45.0f,
+        .battery_valid = true, .battery_pct = 85, .battery_v = 4.01f,
     };
     ui_stock_update_env(&env);
+
+    /* --- Sidebar watchlist: up to 3 REAL quotes -------------------------------
+     * Exactly the on-device path: one quote per watchlist symbol via
+     * stock_service. Live with FINNHUB_KEY (STOCK_SYMBOL may be a CSV list);
+     * falls back to the reference rows when there's no key so the panel still
+     * renders for design comparison. */
+    home_ticker_t tks[HOME_TICKERS_MAX];
+    int tn = 0;
+    if (*key) {
+        const char *wl = getenv("STOCK_SYMBOL"); if (!wl || !*wl) wl = "AAPL,TSLA,MSFT";
+        const char *p = wl;
+        while (*p && tn < HOME_TICKERS_MAX) {
+            while (*p == ' ' || *p == ',') p++;
+            const char *st = p;
+            while (*p && *p != ',') p++;
+            size_t len = (size_t)(p - st);
+            while (len > 0 && st[len - 1] == ' ') len--;
+            if (!len) continue;
+            char s[16]; if (len >= sizeof s) len = sizeof s - 1;
+            memcpy(s, st, len); s[len] = '\0';
+            snprintf(tks[tn].symbol, sizeof tks[tn].symbol, "%s", s);
+            stock_data_t q;
+            if (tn == 0 && data.quote.valid) {           /* reuse the first fetch */
+                tks[tn].price = data.quote.price; tks[tn].percent = data.quote.percent; tks[tn].valid = true;
+            } else if (stock_service_fetch_quote(s, key, &q) && q.quote.valid) {
+                tks[tn].price = q.quote.price; tks[tn].percent = q.quote.percent; tks[tn].valid = true;
+            } else {
+                tks[tn].price = 0; tks[tn].percent = 0; tks[tn].valid = false;
+            }
+            printf("[ticker %d] %-6s $%.2f (%+.2f%%) %s\n", tn, tks[tn].symbol,
+                   tks[tn].price, tks[tn].percent, tks[tn].valid ? "" : "(no data)");
+            tn++;
+        }
+    }
+    if (tn == 0) {
+        home_ticker_t sample[3] = {
+            { "AAPL", 173.50, +1.25, true },
+            { "TSLA", 212.10, -0.50, true },
+            { "MSFT", 330.11, +0.80, true },
+        };
+        memcpy(tks, sample, sizeof sample); tn = 3;
+        printf("[tickers] sample fallback (no FINNHUB_KEY)\n");
+    }
+    ui_home_set_tickers(tks, tn);
+
+    /* --- Weather: REAL via Open-Meteo (keyless) when LOCATION is set ------------
+     * Geocode the typed place to a coordinate, then fetch current + 7-day. This
+     * is the exact on-device WeatherTask path. Sample fallback otherwise. */
+    bool wx_done = false;
+    const char *loc = getenv("LOCATION");
+    if (loc && *loc) {
+        geo_loc_t g;
+        weather_t w;
+        if (weather_service_geocode(loc, &g) && weather_service_fetch(g.lat, g.lon, &w) && w.valid) {
+            char city[64];
+            if (g.country[0]) snprintf(city, sizeof city, "%s, %s", g.name, g.country);
+            else              snprintf(city, sizeof city, "%s", g.name);
+            if (w.now_valid) ui_home_set_weather((home_wx_t)w.now_wx, w.now_temp_c, city);
+            home_forecast_t fcr[HOME_FORECAST_MAX];
+            int fn = w.day_count; if (fn > HOME_FORECAST_MAX) fn = HOME_FORECAST_MAX;
+            for (int i = 0; i < fn; i++) {
+                snprintf(fcr[i].dow, sizeof fcr[i].dow, "%s", w.days[i].dow);
+                fcr[i].wx = (home_wx_t)w.days[i].wx;
+                fcr[i].lo = w.days[i].lo; fcr[i].hi = w.days[i].hi;
+            }
+            ui_home_set_forecast(fcr, fn);
+            printf("[weather] %s -> %s  %d°C, %d-day forecast\n", loc, city, w.now_temp_c, fn);
+            wx_done = true;
+        }
+        if (!wx_done) printf("[weather] lookup failed for '%s' -> sample\n", loc);
+    }
+    if (!wx_done) {
+        ui_home_set_weather(HOME_WX_SUN, 24, "Seoul, KR");
+        home_forecast_t fc[7] = {
+            { "FRI", HOME_WX_PARTLY, 15, 22 },
+            { "SAT", HOME_WX_SUN,    16, 24 },
+            { "SUN", HOME_WX_CLOUD,  14, 20 },
+            { "MON", HOME_WX_RAIN,   12, 17 },
+            { "TUE", HOME_WX_SUN,    14, 21 },
+            { "WED", HOME_WX_PARTLY, 15, 22 },
+            { "THU", HOME_WX_SUN,    16, 24 },
+        };
+        ui_home_set_forecast(fc, 7);
+    }
+
+    /* --- Econ: the 3 NEAREST upcoming high-impact events -----------------------
+     * With FMP_KEY set, fetch the real HIGH-only calendar (this week, then next
+     * week if nothing high is still upcoming) and show the next 3 — exactly what
+     * EconTask + the home tick do on-device. Sample fallback otherwise. */
+    time_t now_home = time(NULL);
+    long   tz_home  = econ_local_tz_off(now_home);
+    const char *home_fmp = getenv("FMP_KEY"); if (!home_fmp) home_fmp = "";
+    econ_calendar_t home_cal;
+    const econ_event_t *picked[HOME_ECON_MAX];
+    int en = 0;
+    if (*home_fmp) {
+        econ_service_fetch(home_fmp, NULL, now_home, tz_home, 0, ECON_IMPACT_HIGH, &home_cal);
+        if (home_cal.valid && econ_next_after(&home_cal, (int64_t)now_home) < 0)
+            econ_service_fetch(home_fmp, NULL, now_home, tz_home, +1, ECON_IMPACT_HIGH, &home_cal);
+        if (home_cal.valid)
+            en = econ_collect_upcoming(&home_cal, (int64_t)now_home, picked, HOME_ECON_MAX);
+        printf("[home econ] valid=%d count=%d upcoming=%d %s\n", home_cal.valid,
+               home_cal.count, en, home_cal.valid ? "" : home_cal.error);
+    }
+    if (en > 0) {
+        econ_event_t evs[HOME_ECON_MAX];
+        char         wb[HOME_ECON_MAX][16];
+        const char  *wp[HOME_ECON_MAX];
+        for (int i = 0; i < en; i++) {
+            evs[i] = *picked[i];
+            econ_when_label(evs[i].ts, now_home, tz_home, wb[i], sizeof wb[i]);
+            wp[i] = wb[i];
+            printf("[home econ %d] %s  %s  (%s)\n", i, wb[i], evs[i].event, evs[i].country);
+        }
+        ui_stock_update_econ(evs, wp, en);
+    } else {
+        /* Three sample events spread over the next couple of days. */
+        static const struct { const char *cc, *name, *est, *act, *prev; int hrs; } S[3] = {
+            { "US", "US Core CPI YoY",   "3.2%",  "3.1%", "3.0%",  3 },
+            { "US", "Fed Rate Decision", "4.50%", "",     "4.50%", 27 },
+            { "JP", "BoJ Rate Decision", "0.75%", "",     "0.50%", 50 },
+        };
+        econ_event_t evs[3];
+        char         wb[3][16];
+        const char  *wp[3];
+        for (int i = 0; i < 3; i++) {
+            memset(&evs[i], 0, sizeof evs[i]);
+            snprintf(evs[i].country,  sizeof evs[i].country,  "%s", S[i].cc);
+            snprintf(evs[i].event,    sizeof evs[i].event,    "%s", S[i].name);
+            snprintf(evs[i].estimate, sizeof evs[i].estimate, "%s", S[i].est);
+            snprintf(evs[i].actual,   sizeof evs[i].actual,   "%s", S[i].act);
+            snprintf(evs[i].previous, sizeof evs[i].previous, "%s", S[i].prev);
+            evs[i].impact = ECON_IMPACT_HIGH;
+            evs[i].ts = (int64_t)now_home + S[i].hrs * 3600;
+            econ_when_label(evs[i].ts, now_home, tz_home, wb[i], sizeof wb[i]);
+            wp[i] = wb[i];
+        }
+        ui_stock_update_econ(evs, wp, 3);
+        printf("[home econ] sample fallback (no FMP_KEY or nothing upcoming)\n");
+    }
 
     char path[640];
     for (int p = 0; p < UI_STOCK_PAGE_COUNT; p++) {

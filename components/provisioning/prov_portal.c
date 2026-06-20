@@ -175,19 +175,33 @@ static void emit_saved_tickers(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, esc);
 }
 
+// Fill the {{LOCATION}} slot with the saved weather location (escaped), so
+// reconfiguring pre-populates the field. Empty for a fresh setup.
+static void emit_saved_location(httpd_req_t *req)
+{
+    if (!s_have_current || s_current.location[0] == '\0') {
+        return;
+    }
+    char esc[PROV_LOCATION_MAX_LEN * 6 + 1];
+    html_escape(s_current.location, esc, sizeof(esc));
+    httpd_resp_sendstr_chunk(req, esc);
+}
+
 static esp_err_t index_get(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "GET %s (serving portal page)", req->uri);
     no_keepalive(req);
     httpd_resp_set_type(req, "text/html");
 
-    // Stream the template, substituting the server-rendered network list and saved watchlist
-    // at their markers. No client-side fetch is required to populate the form.
+    // Stream the template, substituting the server-rendered network list, saved watchlist
+    // and saved location at their markers. No client-side fetch is required to populate the form.
     const char *p = portal_html_start;
     p = emit_until(req, p, "{{OPTIONS}}");
     emit_options(req);
     p = emit_until(req, p, "{{TICKERS}}");
     emit_saved_tickers(req);
+    p = emit_until(req, p, "{{LOCATION}}");
+    emit_saved_location(req);
     if (p != NULL) {
         httpd_resp_sendstr_chunk(req, p);
     }
@@ -248,10 +262,12 @@ static esp_err_t save_post(httpd_req_t *req)
     char ssid_manual[64] = {0};
     char password[96] = {0};
     char tickers[256] = {0};
+    char location[128] = {0};
     prov_form_get_field(body, "ssid", ssid, sizeof(ssid));
     prov_form_get_field(body, "ssid_manual", ssid_manual, sizeof(ssid_manual));
     prov_form_get_field(body, "password", password, sizeof(password));
     prov_form_get_field(body, "tickers", tickers, sizeof(tickers));
+    prov_form_get_field(body, "location", location, sizeof(location));
 
     // "Other network…" selected → the real SSID is in the manual field, not the sentinel.
     if (strcmp(ssid, "__manual__") == 0) {
@@ -272,15 +288,20 @@ static esp_err_t save_post(httpd_req_t *req)
         return send_result_page(req, "Password is too long",
                                 "The password exceeds the 64-character limit.", false);
     }
+    if (strlen(location) > PROV_LOCATION_MAX_LEN) {
+        return send_result_page(req, "Location is too long",
+                                "The weather location exceeds the 48-character limit.", false);
+    }
 
     prov_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     strlcpy(cfg.ssid, ssid, sizeof(cfg.ssid));
     strlcpy(cfg.password, password, sizeof(cfg.password));
+    strlcpy(cfg.location, location, sizeof(cfg.location));
     prov_tickers_parse(&cfg, tickers);
 
-    ESP_LOGI(TAG, "config submitted: ssid='%s', %u tickers",
-             cfg.ssid, (unsigned)cfg.ticker_count);
+    ESP_LOGI(TAG, "config submitted: ssid='%s', %u tickers, loc='%s'",
+             cfg.ssid, (unsigned)cfg.ticker_count, cfg.location);
 
     char esc[PROV_SSID_MAX_LEN * 6 + 1];
     html_escape(cfg.ssid, esc, sizeof(esc));

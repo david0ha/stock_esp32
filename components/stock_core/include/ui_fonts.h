@@ -15,8 +15,17 @@
 extern "C" {
 #endif
 
-extern const lv_font_t ui_font_black_50;   /* symbol + price hero */
-extern const lv_font_t ui_font_black_26;   /* time/date, change, weather values */
+extern const lv_font_t ui_font_black_50;   /* symbol + price hero (legacy card) */
+extern const lv_font_t ui_font_black_26;   /* time/date, change, weather values  */
+
+/* Montserrat-Bold, 1-bpp — the dashboard's display weight (matches the
+ * reference desk render). Regenerate with:
+ *   npx -y lv_font_conv --font Montserrat-Bold.ttf --size N --bpp 1 \
+ *       --format lvgl -r 0x20-0x7E -r 0xB0 --no-compress \
+ *       -o ui_font_mont_bold_N.c --lv-font-name ui_font_mont_bold_N
+ */
+extern const lv_font_t ui_font_mont_bold_46;   /* hero clock          */
+extern const lv_font_t ui_font_mont_bold_20;   /* sidebar symbols     */
 
 #ifdef __cplusplus
 }

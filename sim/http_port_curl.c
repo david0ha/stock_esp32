@@ -15,6 +15,10 @@
 
 #define HTTP_MAX_RESP (320 * 1024)   /* mirror the device cap so the sim surfaces oversize responses */
 
+/* No TLS-connect gate on the host: libcurl opens a fresh easy handle per call and
+ * the desktop isn't crypto-starved. Defined so both ports satisfy the seam. */
+void http_port_init(void) { }
+
 typedef struct { char *buf; size_t len; } membuf_t;
 
 static size_t on_data(void *ptr, size_t size, size_t nmemb, void *userp) {

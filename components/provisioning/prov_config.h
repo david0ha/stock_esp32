@@ -12,6 +12,7 @@
 #define PROV_FINNHUB_KEY_MAX  48   // Finnhub API key (real keys ~20 chars)
 #define PROV_FMP_KEY_MAX      48   // FMP / econ-proxy key or shared secret
 #define PROV_ECON_URL_MAX    127   // economic-calendar base URL (FMP or self-hosted proxy)
+#define PROV_LOCATION_MAX_LEN 48   // free-text weather location ("Seoul", "Paris, FR")
 
 typedef struct {
     char   ssid[PROV_SSID_MAX_LEN + 1];
@@ -24,6 +25,11 @@ typedef struct {
     char   finnhub_key[PROV_FINNHUB_KEY_MAX + 1];
     char   fmp_key[PROV_FMP_KEY_MAX + 1];
     char   econ_url[PROV_ECON_URL_MAX + 1];
+    // Free-text place the user typed for weather. The device geocodes it to a
+    // coordinate (Open-Meteo) once online — the portal/AP has no internet to do
+    // so itself — and shows the resolved "City, CC" as confirmation. Empty -> no
+    // weather widget.
+    char   location[PROV_LOCATION_MAX_LEN + 1];
 } prov_config_t;
 
 #ifdef __cplusplus
