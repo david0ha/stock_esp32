@@ -61,12 +61,15 @@ export default function Keys() {
           keyboardType="url"
         />
 
+        {/* Plain free-text only — NO city autocomplete here. During onboarding the phone is joined
+            to the board's SoftAP, which has no internet, so Open-Meteo's geocoder is unreachable.
+            Autocomplete lives in Settings (Weather), where the phone is back on Wi-Fi. */}
         <Field
           label="Weather location (optional)"
           value={location}
           onChangeText={setLocation}
           placeholder='e.g. "Seoul" or "Paris, FR"'
-          hint="Shows local weather on the board's home screen. Leave blank to turn the weather widget off."
+          hint="Shows local weather on the board's home screen. Leave blank to turn the weather widget off — you can fine-tune it later in Settings."
         />
       </ScrollView>
     </StepScaffold>

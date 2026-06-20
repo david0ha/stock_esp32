@@ -14,6 +14,7 @@ import { Screen } from '../components/Screen'
 import { BackButton } from '../components/BackButton'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
+import { LocationAutocomplete } from '../components/LocationAutocomplete'
 import { useDevice } from '../lib/device'
 import { type DeviceInfo, type StockKeys, type StockWeather } from '../lib/esp32'
 import { DEFAULT_HOST, discoverDevice, normalizeBaseUrl } from '../lib/discovery'
@@ -264,7 +265,7 @@ export default function Settings() {
             ) : location ? (
               <Text style={styles.help}>Resolving weather for “{location}”…</Text>
             ) : null}
-            <LocationRow
+            <LocationAutocomplete
               key={location ?? ''}
               initial={location ?? ''}
               onSave={updateLocation}
@@ -365,55 +366,6 @@ function KeyRow({
       {failed ? <Text style={styles.error}>Couldn’t update. Please try again.</Text> : null}
       {done ? <Text style={styles.saved}>Updated.</Text> : null}
       <Button label="Update" variant="secondary" loading={saving} onPress={save} />
-    </View>
-  )
-}
-
-// The weather-location editor. Unlike a key, the location is non-secret so we prefill it with the
-// current value; an empty string is a valid "turn weather off" request and is sent through.
-function LocationRow({
-  initial,
-  onSave,
-}: {
-  initial: string
-  onSave: (value: string) => Promise<boolean>
-}) {
-  const [draft, setDraft] = useState(initial)
-  const [saving, setSaving] = useState(false)
-  const [done, setDone] = useState(false)
-  const [failed, setFailed] = useState(false)
-
-  const save = async () => {
-    setSaving(true)
-    setDone(false)
-    setFailed(false)
-    const ok = await onSave(draft.trim())
-    setSaving(false)
-    if (ok) setDone(true)
-    else setFailed(true)
-  }
-
-  return (
-    <View style={styles.keyRow}>
-      <View style={styles.hostRow}>
-        <TextInput
-          value={draft}
-          onChangeText={(t) => {
-            setDraft(t)
-            setDone(false)
-            setFailed(false)
-          }}
-          placeholder='e.g. "Seoul" or "Paris, FR"'
-          placeholderTextColor={colors.textFaint}
-          autoCapitalize="words"
-          autoCorrect={false}
-          style={styles.hostInput}
-          onSubmitEditing={save}
-        />
-      </View>
-      {failed ? <Text style={styles.error}>Couldn’t update. Please try again.</Text> : null}
-      {done ? <Text style={styles.saved}>Updated.</Text> : null}
-      <Button label="Save" variant="secondary" loading={saving} onPress={save} />
     </View>
   )
 }
