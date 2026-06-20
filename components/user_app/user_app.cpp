@@ -117,6 +117,7 @@ typedef enum {
     APP_CMD_REFRESH,        /* bval = refresh whole watchlist vs current */
     APP_CMD_SET_WATCHLIST,  /* text = normalized comma-separated symbols */
     APP_CMD_SET_KEYS,       /* set_<x> + key fields below                */
+    APP_CMD_SET_LOCATION,   /* text = weather location free-text         */
 } app_cmd_kind_t;
 
 typedef struct {
@@ -464,50 +465,83 @@ static void EconTask(void *arg) {
 
 static geo_loc_t s_geo;   /* resolved location (only WeatherTask touches it) */
 
+/* Given by apply_location (app settings) so WeatherTask re-geocodes the new place live. */
+static SemaphoreHandle_t s_weather_wake;
+/* Resolved current weather, published for the app snapshot (guarded by s_mtx). */
+static bool s_wx_valid;
+static char s_wx_city[64];
+static int  s_wx_temp_c;
+
 static void WeatherTask(void *arg) {
     (void)arg;
-    const char *place = s_cfg.location[0] ? s_cfg.location : CONFIG_STOCK_LOCATION;
-    if (!place[0]) { ESP_LOGI(TAG, "weather: no location set -> widget off"); vTaskDelete(NULL); return; }
-
     /* Boot stagger: run the geocode+forecast back-to-back handshakes after the
      * stock/econ tasks (~+6s). One-time; the 1800s cadence makes the offset
      * immaterial (and geocode already retries for 6×10s if the net isn't up). */
     vTaskDelay(pdMS_TO_TICKS(6000));
 
-    /* Geocode once, retrying a few times in case the network isn't up yet. */
-    bool geo_ok = false;
-    for (int tries = 0; tries < 6 && !geo_ok; tries++) {
-        geo_ok = weather_service_geocode(place, &s_geo);
-        if (!geo_ok) vTaskDelay(pdMS_TO_TICKS(10000));
-    }
-    if (!geo_ok) { ESP_LOGW(TAG, "weather: geocode failed for '%s'", place); vTaskDelete(NULL); return; }
-
-    char city[64];
-    if (s_geo.country[0]) snprintf(city, sizeof city, "%s, %s", s_geo.name, s_geo.country);
-    else                  snprintf(city, sizeof city, "%s", s_geo.name);
-    ESP_LOGI(TAG, "weather: '%s' -> %s (%.3f, %.3f)", place, city, s_geo.lat, s_geo.lon);
-
+    /* Outer loop = one "configured location" epoch. Re-entered whenever the app changes the
+     * location (apply_location gives s_weather_wake), so the widget tracks live edits without a
+     * reboot — and a location set AFTER an empty-at-boot start turns the widget on. */
     for (;;) {
-        weather_t w;
-        if (weather_service_fetch(s_geo.lat, s_geo.lon, &w) && w.valid) {
-            home_forecast_t fc[HOME_FORECAST_MAX];
-            int fn = w.day_count; if (fn > HOME_FORECAST_MAX) fn = HOME_FORECAST_MAX;
-            for (int i = 0; i < fn; i++) {
-                snprintf(fc[i].dow, sizeof fc[i].dow, "%s", w.days[i].dow);
-                fc[i].wx = (home_wx_t)w.days[i].wx;
-                fc[i].lo = w.days[i].lo;
-                fc[i].hi = w.days[i].hi;
-            }
-            if (Lvgl_lock(-1)) {
-                if (w.now_valid) ui_home_set_weather((home_wx_t)w.now_wx, w.now_temp_c, city);
-                ui_home_set_forecast(fc, fn);
-                Lvgl_unlock();
-            }
-            ESP_LOGI(TAG, "weather: %d°C now, %d-day forecast", w.now_temp_c, fn);
-        } else {
-            ESP_LOGW(TAG, "weather: fetch failed");
+        char place[PROV_LOCATION_MAX_LEN + 1];
+        state_lock();
+        strlcpy(place, s_cfg.location[0] ? s_cfg.location : CONFIG_STOCK_LOCATION, sizeof(place));
+        state_unlock();
+
+        if (!place[0]) {
+            ESP_LOGI(TAG, "weather: no location set -> widget off");
+            state_lock(); s_wx_valid = false; s_wx_city[0] = '\0'; state_unlock();
+            xSemaphoreTake(s_weather_wake, portMAX_DELAY);   /* wait until a location is set */
+            continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(WEATHER_REFRESH_SECONDS * 1000));
+
+        /* Geocode, retrying for the network to come up. A location change during the retry wait
+         * breaks out early to re-snapshot the new place. */
+        bool geo_ok = false;
+        for (int tries = 0; tries < 6 && !geo_ok; tries++) {
+            geo_ok = weather_service_geocode(place, &s_geo);
+            if (!geo_ok && xSemaphoreTake(s_weather_wake, pdMS_TO_TICKS(10000)) == pdTRUE) break;
+        }
+        if (!geo_ok) { ESP_LOGW(TAG, "weather: geocode failed for '%s'", place); continue; }
+
+        char city[64];
+        if (s_geo.country[0]) snprintf(city, sizeof city, "%s, %s", s_geo.name, s_geo.country);
+        else                  snprintf(city, sizeof city, "%s", s_geo.name);
+        ESP_LOGI(TAG, "weather: '%s' -> %s (%.3f, %.3f)", place, city, s_geo.lat, s_geo.lon);
+
+        /* Forecast refresh loop; wakes early (and re-geocodes) when the location changes. */
+        bool reconfig = false;
+        while (!reconfig) {
+            weather_t w;
+            if (weather_service_fetch(s_geo.lat, s_geo.lon, &w) && w.valid) {
+                home_forecast_t fc[HOME_FORECAST_MAX];
+                int fn = w.day_count; if (fn > HOME_FORECAST_MAX) fn = HOME_FORECAST_MAX;
+                for (int i = 0; i < fn; i++) {
+                    snprintf(fc[i].dow, sizeof fc[i].dow, "%s", w.days[i].dow);
+                    fc[i].wx = (home_wx_t)w.days[i].wx;
+                    fc[i].lo = w.days[i].lo;
+                    fc[i].hi = w.days[i].hi;
+                }
+                if (Lvgl_lock(-1)) {
+                    if (w.now_valid) ui_home_set_weather((home_wx_t)w.now_wx, w.now_temp_c, city);
+                    ui_home_set_forecast(fc, fn);
+                    Lvgl_unlock();
+                }
+                /* Publish for the app snapshot. */
+                state_lock();
+                s_wx_valid  = w.now_valid;
+                s_wx_temp_c = w.now_temp_c;
+                strlcpy(s_wx_city, city, sizeof(s_wx_city));
+                state_unlock();
+                ESP_LOGI(TAG, "weather: %d°C now, %d-day forecast", w.now_temp_c, fn);
+            } else {
+                ESP_LOGW(TAG, "weather: fetch failed");
+            }
+            /* Wait the refresh cadence, but wake immediately on a location change. */
+            if (xSemaphoreTake(s_weather_wake, pdMS_TO_TICKS(WEATHER_REFRESH_SECONDS * 1000)) == pdTRUE) {
+                reconfig = true;
+            }
+        }
     }
 }
 
@@ -649,6 +683,19 @@ static void apply_keys(const app_cmd_t *c) {
              c->set_finnhub, c->set_fmp, c->set_econ);
 }
 
+/* Set the weather location (from app settings), persist to NVS, and wake WeatherTask to
+ * re-geocode it live (no reboot). An empty string turns the widget off. Runs on StockTask. */
+static void apply_location(const char *place) {
+    state_lock();
+    strlcpy(s_cfg.location, place, sizeof(s_cfg.location));
+    state_unlock();
+    if (!prov_store_save(&s_cfg)) {
+        ESP_LOGW(TAG, "location change: NVS save failed (will not survive reboot)");
+    }
+    if (s_weather_wake) xSemaphoreGive(s_weather_wake);
+    ESP_LOGI(TAG, "weather location set to '%s' via app", place);
+}
+
 /* Apply one control command from the HTTP server (runs on StockTask). */
 static void handle_cmd(const app_cmd_t *c) {
     switch (c->kind) {
@@ -692,6 +739,9 @@ static void handle_cmd(const app_cmd_t *c) {
             break;
         case APP_CMD_SET_KEYS:
             apply_keys(c);
+            break;
+        case APP_CMD_SET_LOCATION:
+            apply_location(c->text);
             break;
     }
 }
@@ -829,6 +879,7 @@ void UserApp_TaskInit(const prov_config_t *cfg) {
 
     s_mtx        = xSemaphoreCreateMutex();
     s_fetch_wake = xSemaphoreCreateCounting(PROV_MAX_TICKERS + NUM_FETCHERS, 0);
+    s_weather_wake = xSemaphoreCreateBinary();   /* wakes WeatherTask to re-geocode a new location */
 
     /* Home-row econ cache + EconTask scratch (PSRAM, each ~1.4KB). */
     s_home_econ_mtx     = xSemaphoreCreateMutex();
@@ -896,6 +947,10 @@ void user_app_snapshot(stock_api_state_t *out) {
     out->keys.finnhub  = s_cfg.finnhub_key[0] != '\0';
     out->keys.fmp      = s_cfg.fmp_key[0] != '\0';
     out->keys.econ_url = s_cfg.econ_url[0] != '\0';
+    strlcpy(out->location, s_cfg.location, sizeof(out->location));
+    out->weather.valid  = s_wx_valid;
+    out->weather.temp_c = s_wx_temp_c;
+    strlcpy(out->weather.city, s_wx_city, sizeof(out->weather.city));
     out->env.valid         = s_last_env.env_valid;
     out->env.temp_c        = s_last_env.temp_c;
     out->env.humidity      = s_last_env.humidity;
@@ -1000,5 +1055,14 @@ bool user_app_set_keys(const char *finnhub, const char *fmp, const char *econ_ur
     if (fmp)      { c.set_fmp     = true; strlcpy(c.fmp,      fmp,      sizeof(c.fmp)); }
     if (econ_url) { c.set_econ    = true; strlcpy(c.econ_url, econ_url, sizeof(c.econ_url)); }
     if (!c.set_finnhub && !c.set_fmp && !c.set_econ) return false;   // nothing to change
+    return xQueueSend(s_cmd_queue, &c, 0) == pdTRUE;
+}
+
+bool user_app_set_location(const char *place) {
+    if (!s_cmd_queue || !place) return false;
+    app_cmd_t c;
+    memset(&c, 0, sizeof(c));
+    c.kind = APP_CMD_SET_LOCATION;
+    strlcpy(c.text, place, sizeof(c.text));   // free-text place (<= PROV_LOCATION_MAX_LEN chars)
     return xQueueSend(s_cmd_queue, &c, 0) == pdTRUE;
 }

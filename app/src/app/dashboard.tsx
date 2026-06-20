@@ -146,6 +146,13 @@ export default function Dashboard() {
             <Chip label={`${state.env.tempC.toFixed(1)}°C`} icon="thermometer" />
           ) : null}
           {state.env.valid ? <Chip label={`${state.env.humidity.toFixed(0)}%`} icon="water" /> : null}
+          {/* Weather: show the resolved chip once valid; a subtle loading hint while the device
+              geocodes a freshly-set location; nothing at all when no location is configured. */}
+          {state.weather.valid ? (
+            <Chip label={`${Math.round(state.weather.tempC)}° ${state.weather.city}`} icon="cloud" />
+          ) : state.location ? (
+            <Chip label={`weather: ${state.location}…`} icon="cloud" tone="neutral" />
+          ) : null}
           {state.env.batteryValid ? (
             <Chip
               label={`${state.env.batteryPct}%`}

@@ -17,6 +17,7 @@
 //   POST /api/stock/refresh   { all? }
 //   POST /api/stock/watchlist { tickers: string[] | string }
 //   POST /api/stock/keys      { finnhubKey?, fmpKey?, econUrl? }
+//   POST /api/stock/location  { location }   // free-text place; '' turns the weather widget off
 //
 // Every function takes an injectable fetch/clock so it can be unit-tested without a device.
 
@@ -83,6 +84,17 @@ export interface StockEnv {
   batteryPct: number
 }
 
+/**
+ * Resolved current weather for the configured location (GET /api/stock/state). valid=false until
+ * the device's first forecast lands (or when no location is set). `city` is the geocoded place name
+ * the device resolved (e.g. "Seoul, KR"); `tempC` is the current temperature in °C.
+ */
+export interface StockWeather {
+  valid: boolean
+  tempC: number
+  city: string
+}
+
 /** The live snapshot the dashboard polls (GET /api/stock/state). */
 export interface StockState {
   model: string
@@ -101,6 +113,10 @@ export interface StockState {
   /** Which data-source keys/URL are configured (presence only — never the secret values). */
   keys: StockKeys
   env: StockEnv
+  /** Configured weather location (free-text place, e.g. "Seoul"). Empty string = weather off. */
+  location: string
+  /** Resolved current weather for `location` (valid=false until the first forecast lands). */
+  weather: StockWeather
   watchlist: StockTicker[]
 }
 
@@ -239,6 +255,15 @@ function parseKeys(raw: Record<string, unknown> | undefined): StockKeys {
   }
 }
 
+function parseWeather(raw: Record<string, unknown> | undefined): StockWeather {
+  const w = raw ?? {}
+  return {
+    valid: asBool(w.valid),
+    tempC: asNum(w.tempC),
+    city: asStr(w.city),
+  }
+}
+
 export function createEsp32Client(opts: Esp32ClientOptions = {}) {
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
   const doFetch = opts.fetchImpl ?? fetch
@@ -315,7 +340,10 @@ export function createEsp32Client(opts: Esp32ClientOptions = {}) {
     ssid: string,
     password: string,
     tickers?: string,
-    opts?: StockKeyInput,
+    opts?: StockKeyInput & {
+      /** Weather location (free-text place, e.g. "Seoul"). Empty/omitted leaves it unset. */
+      location?: string
+    },
   ): Promise<void> {
     let body = `ssid=${encodeURIComponent(ssid)}&password=${encodeURIComponent(password)}`
     if (tickers != null && tickers.length > 0) {
@@ -327,6 +355,8 @@ export function createEsp32Client(opts: Esp32ClientOptions = {}) {
     if (opts?.finnhubKey != null) body += `&finnhub_key=${encodeURIComponent(opts.finnhubKey)}`
     if (opts?.fmpKey != null) body += `&fmp_key=${encodeURIComponent(opts.fmpKey)}`
     if (opts?.econUrl != null) body += `&econ_url=${encodeURIComponent(opts.econUrl)}`
+    // Weather location is optional too; same "send what was provided" semantics as the keys above.
+    if (opts?.location != null) body += `&location=${encodeURIComponent(opts.location)}`
     const res = await request('/api/provision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -399,6 +429,8 @@ export function createEsp32Client(opts: Esp32ClientOptions = {}) {
       refreshSeconds: asNum(j.refreshSeconds),
       keys: parseKeys(j.keys as Record<string, unknown> | undefined),
       env: parseEnv(j.env as Record<string, unknown> | undefined),
+      location: asStr(j.location),
+      weather: parseWeather(j.weather as Record<string, unknown> | undefined),
       watchlist,
     }
   }
@@ -444,6 +476,13 @@ export function createEsp32Client(opts: Esp32ClientOptions = {}) {
     return postJson('/api/stock/keys', body, 'keys')
   }
 
+  // Set the weather location live (NVS-persisted, the device re-geocodes via Open-Meteo with no
+  // reboot). An empty string is valid — it turns the weather widget off — and is sent through.
+  // Success is 200 {ok:true}; a bad body is surfaced as a typed Esp32Error ('bad_json').
+  async function setLocation(location: string): Promise<void> {
+    return postJson('/api/stock/location', { location }, 'location')
+  }
+
   return {
     baseUrl,
     // provisioning
@@ -460,6 +499,7 @@ export function createEsp32Client(opts: Esp32ClientOptions = {}) {
     refresh,
     setWatchlist,
     setKeys,
+    setLocation,
   }
 }
 

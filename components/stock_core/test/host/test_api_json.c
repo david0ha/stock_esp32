@@ -55,6 +55,10 @@ static stock_api_state_t make_state(void) {
     st.keys.finnhub = true;
     st.keys.fmp = false;
     st.keys.econ_url = true;
+    strcpy(st.location, "Seoul");
+    st.weather.valid = true;
+    st.weather.temp_c = 21;
+    strcpy(st.weather.city, "Seoul, KR");
     st.env.valid = true;
     st.env.temp_c = 24.3;
     st.env.humidity = 41.0;
@@ -100,6 +104,13 @@ static void test_state_fields(void) {
     CHECK(cJSON_IsTrue(cJSON_GetObjectItem(keys, "finnhub")));
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(keys, "fmp")));
     CHECK(cJSON_IsTrue(cJSON_GetObjectItem(keys, "econUrl")));
+
+    CHECK_STR(cJSON_GetObjectItem(root, "location")->valuestring, "Seoul");
+    cJSON *wx = cJSON_GetObjectItem(root, "weather");
+    CHECK(wx != NULL);
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItem(wx, "valid")));
+    CHECK(cJSON_GetObjectItem(wx, "tempC")->valueint == 21);
+    CHECK_STR(cJSON_GetObjectItem(wx, "city")->valuestring, "Seoul, KR");
 
     cJSON *env = cJSON_GetObjectItem(root, "env");
     CHECK(env != NULL);

@@ -119,10 +119,14 @@ int stock_api_json_state(const stock_api_state_t *st, char *out, size_t out_size
     char e_fw[STOCK_API_FW_MAXLEN * 6 + 1];
     char e_id[STOCK_API_DEVID_MAXLEN * 6 + 1];
     char e_ip[STOCK_API_IP_MAXLEN * 6 + 1];
+    char e_loc[STOCK_API_LOCATION_MAXLEN * 6 + 1];
+    char e_city[STOCK_API_CITY_MAXLEN * 6 + 1];
     if (json_escape(st->model, e_model, sizeof(e_model)) < 0 ||
         json_escape(st->fw, e_fw, sizeof(e_fw)) < 0 ||
         json_escape(st->device_id, e_id, sizeof(e_id)) < 0 ||
-        json_escape(st->ip, e_ip, sizeof(e_ip)) < 0) {
+        json_escape(st->ip, e_ip, sizeof(e_ip)) < 0 ||
+        json_escape(st->location, e_loc, sizeof(e_loc)) < 0 ||
+        json_escape(st->weather.city, e_city, sizeof(e_city)) < 0) {
         return fail(out, out_size);
     }
 
@@ -137,6 +141,8 @@ int stock_api_json_state(const stock_api_state_t *st, char *out, size_t out_size
         "{\"model\":\"%s\",\"fw\":\"%s\",\"deviceId\":\"%s\",\"ip\":\"%s\","
         "\"index\":%d,\"page\":%d,\"econMode\":%s,\"econWeek\":%d,\"refreshSeconds\":%d,"
         "\"keys\":{\"finnhub\":%s,\"fmp\":%s,\"econUrl\":%s},"
+        "\"location\":\"%s\","
+        "\"weather\":{\"valid\":%s,\"tempC\":%d,\"city\":\"%s\"},"
         "\"env\":{\"valid\":%s,\"tempC\":%s,\"humidity\":%s,"
         "\"batteryValid\":%s,\"batteryV\":%s,\"batteryPct\":%d},"
         "\"watchlist\":[",
@@ -145,6 +151,8 @@ int stock_api_json_state(const stock_api_state_t *st, char *out, size_t out_size
         st->refresh_seconds,
         st->keys.finnhub ? "true" : "false", st->keys.fmp ? "true" : "false",
         st->keys.econ_url ? "true" : "false",
+        e_loc,
+        st->weather.valid ? "true" : "false", st->weather.temp_c, e_city,
         st->env.valid ? "true" : "false", temp, hum,
         st->env.battery_valid ? "true" : "false", bv, st->env.battery_pct);
     if (head < 0 || (size_t)head >= out_size) {

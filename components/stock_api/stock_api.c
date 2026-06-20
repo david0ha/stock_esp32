@@ -294,6 +294,25 @@ static esp_err_t api_keys_post(httpd_req_t *req)
     return rc;
 }
 
+// POST /api/stock/location { location } — set the weather location live (persisted to NVS; the
+// device re-geocodes it via Open-Meteo). An empty string turns the weather widget off.
+static esp_err_t api_location_post(httpd_req_t *req)
+{
+    esp_err_t sent;
+    cJSON *root = parse_body(req, &sent);
+    if (root == NULL) return sent;
+
+    cJSON *loc = cJSON_GetObjectItem(root, "location");
+    esp_err_t rc;
+    if (!cJSON_IsString(loc) || loc->valuestring == NULL) {
+        rc = send_err(req, "bad_json");
+    } else {
+        rc = user_app_set_location(loc->valuestring) ? send_ok(req) : send_err(req, "bad_json");
+    }
+    cJSON_Delete(root);
+    return rc;
+}
+
 // ---------------------------------------------------------------------------
 // Server + mDNS bring-up
 // ---------------------------------------------------------------------------
@@ -321,6 +340,7 @@ static void start_http(void)
         {.uri = "/api/stock/refresh",   .method = HTTP_POST, .handler = api_refresh_post},
         {.uri = "/api/stock/watchlist", .method = HTTP_POST, .handler = api_watchlist_post},
         {.uri = "/api/stock/keys",      .method = HTTP_POST, .handler = api_keys_post},
+        {.uri = "/api/stock/location",  .method = HTTP_POST, .handler = api_location_post},
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);

@@ -409,6 +409,7 @@ static esp_err_t api_provision_post(httpd_req_t *req)
     char finnhub[80] = {0};
     char fmp[80] = {0};
     char econ_url[256] = {0};
+    char location[128] = {0};
     prov_form_get_field(body, "ssid", ssid, sizeof(ssid));
     prov_form_get_field(body, "ssid_manual", ssid_manual, sizeof(ssid_manual));
     prov_form_get_field(body, "password", password, sizeof(password));
@@ -416,6 +417,7 @@ static esp_err_t api_provision_post(httpd_req_t *req)
     prov_form_get_field(body, "finnhub_key", finnhub, sizeof(finnhub));
     prov_form_get_field(body, "fmp_key", fmp, sizeof(fmp));
     prov_form_get_field(body, "econ_url", econ_url, sizeof(econ_url));
+    prov_form_get_field(body, "location", location, sizeof(location));
     // "Other network…" selected → the real SSID is in the manual field, not the sentinel.
     if (strcmp(ssid, "__manual__") == 0) {
         strlcpy(ssid, ssid_manual, sizeof(ssid));
@@ -442,6 +444,7 @@ static esp_err_t api_provision_post(httpd_req_t *req)
     strlcpy(cfg.finnhub_key, finnhub, sizeof(cfg.finnhub_key));
     strlcpy(cfg.fmp_key, fmp, sizeof(cfg.fmp_key));
     strlcpy(cfg.econ_url, econ_url, sizeof(cfg.econ_url));
+    strlcpy(cfg.location, location, sizeof(cfg.location));
 
     ESP_LOGI(TAG, "POST /api/provision: ssid='%s', %u tickers — starting connect test",
              cfg.ssid, (unsigned)cfg.ticker_count);

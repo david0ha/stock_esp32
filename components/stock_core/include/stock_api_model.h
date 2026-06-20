@@ -18,6 +18,8 @@
 #define STOCK_API_FW_MAXLEN      16
 #define STOCK_API_DEVID_MAXLEN   16
 #define STOCK_API_IP_MAXLEN      16
+#define STOCK_API_LOCATION_MAXLEN 48   /* == PROV_LOCATION_MAX_LEN  */
+#define STOCK_API_CITY_MAXLEN    64    /* resolved "City, CC"       */
 
 /* One watchlist slot's realtime quote, mirrored from the on-device cache. */
 typedef struct {
@@ -36,6 +38,14 @@ typedef struct {
     bool fmp;
     bool econ_url;
 } stock_api_keys_t;
+
+/* Resolved outdoor weather for the configured location (Open-Meteo), mirrored from WeatherTask.
+ * `city` is the geocoded "City, CC" confirmation; valid=false until the first forecast lands. */
+typedef struct {
+    bool valid;
+    int  temp_c;
+    char city[STOCK_API_CITY_MAXLEN];
+} stock_api_weather_t;
 
 /* On-board environment, mirrored from the home page's sensor read. */
 typedef struct {
@@ -61,6 +71,8 @@ typedef struct {
     int    refresh_seconds;  /* background refresh cadence           */
 
     stock_api_keys_t   keys;
+    char               location[STOCK_API_LOCATION_MAXLEN + 1];  /* configured place (city name) */
+    stock_api_weather_t weather;
     stock_api_env_t    env;
     size_t             ticker_count;
     stock_api_ticker_t tickers[STOCK_API_MAX_TICKERS];

@@ -19,6 +19,7 @@
 //     POST /api/stock/refresh   { all? }
 //     POST /api/stock/watchlist { tickers: string[] | string }
 //     POST /api/stock/keys      { finnhubKey?, fmpKey?, econUrl? }    (presence only; values not stored)
+//     POST /api/stock/location  { location }                         ('' turns the weather widget off)
 //
 // Usage:
 //   node scripts/mock-esp32.js               # listens on http://localhost:8080
@@ -66,6 +67,10 @@ const stock = {
   // only — it never stores or returns the actual secret values.
   keys: { finnhub: false, fmp: false, econUrl: false },
   env: { valid: true, tempC: 24.3, humidity: 41, batteryValid: true, batteryV: 4.02, batteryPct: 88 },
+  // Weather location (free-text, like the firmware) + the resolved current weather. Default: no
+  // location set → weather invalid. Setting a location fakes a geocode + a drifting temperature.
+  location: '',
+  weather: { valid: false, tempC: 0, city: '' },
   tickers: [
     makeTicker('AAPL', 201.5),
     makeTicker('TSLA', 246.2),
@@ -87,6 +92,23 @@ function driftQuotes() {
   // Gently wander the sensors too.
   stock.env.tempC = +(stock.env.tempC + (Math.random() - 0.5) * 0.1).toFixed(2)
   stock.env.humidity = Math.min(99, Math.max(1, stock.env.humidity + (Math.random() - 0.5) * 0.4))
+  // Drift the weather a touch as well so the dashboard chip visibly updates while it's valid.
+  if (stock.weather.valid) {
+    stock.weather.tempC = +(stock.weather.tempC + (Math.random() - 0.5) * 0.3).toFixed(1)
+  }
+}
+
+// Fake the device's geocode + forecast: a non-empty location resolves to a "<Place>, KR" city and
+// a plausible temperature; an empty location turns the weather widget off (matches the firmware).
+function resolveWeather(loc) {
+  const place = String(loc ?? '').trim()
+  stock.location = place
+  if (!place) {
+    stock.weather = { valid: false, tempC: 0, city: '' }
+    return
+  }
+  const city = place.includes(',') ? place : `${place}, KR`
+  stock.weather = { valid: true, tempC: +(15 + Math.random() * 12).toFixed(1), city }
 }
 
 function stockState() {
@@ -102,6 +124,8 @@ function stockState() {
     refreshSeconds: stock.refreshSeconds,
     keys: { ...stock.keys },
     env: stock.env,
+    location: stock.location,
+    weather: { ...stock.weather },
     watchlist: stock.tickers.map((t) => ({
       symbol: t.symbol,
       valid: t.valid,
@@ -207,6 +231,10 @@ const server = http.createServer(async (req, res) => {
     applyKey('finnhub', 'finnhub_key', form)
     applyKey('fmp', 'fmp_key', form)
     applyKey('econUrl', 'econ_url', form)
+
+    // Optional weather location (NVS at provisioning time). A present field resolves it; an empty
+    // value turns the widget off. An omitted field leaves the current location untouched.
+    if ('location' in form) resolveWeather(form.location)
 
     // Apply the optional watchlist immediately (the firmware persists it during provisioning).
     if (tickers) {
@@ -333,6 +361,22 @@ const server = http.createServer(async (req, res) => {
     if (typeof j.fmpKey === 'string') stock.keys.fmp = j.fmpKey.length > 0
     if (typeof j.econUrl === 'string') stock.keys.econUrl = j.econUrl.length > 0
     console.log(`   -> keys now ${JSON.stringify(stock.keys)}`)
+    return sendJson(res, 200, { ok: true })
+  }
+
+  if (method === 'POST' && url === '/api/stock/location') {
+    const body = await readBody(req)
+    let j
+    try {
+      j = JSON.parse(body)
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'bad_json' })
+    }
+    if (typeof j.location !== 'string') {
+      return sendJson(res, 400, { ok: false, error: 'bad_json' })
+    }
+    resolveWeather(j.location)
+    console.log(`   -> location set to "${stock.location}" (weather ${stock.weather.valid ? stock.weather.city : 'off'})`)
     return sendJson(res, 200, { ok: true })
   }
 

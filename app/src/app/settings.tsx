@@ -15,7 +15,7 @@ import { BackButton } from '../components/BackButton'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { useDevice } from '../lib/device'
-import { type DeviceInfo, type StockKeys } from '../lib/esp32'
+import { type DeviceInfo, type StockKeys, type StockWeather } from '../lib/esp32'
 import { DEFAULT_HOST, discoverDevice, normalizeBaseUrl } from '../lib/discovery'
 import { clearDeviceBaseUrl, getDeviceBaseUrl, resetOnboarding } from '../lib/store'
 import { colors, layout, radius, space } from '../theme'
@@ -34,6 +34,11 @@ export default function Settings() {
   // never exposes the stored values). Loaded from GET /api/stock/state alongside device info.
   const [keys, setKeysState] = useState<StockKeys | null>(null)
 
+  // Configured weather location + the device's resolved current weather (GET /api/stock/state).
+  // Unlike keys, the location is plain text the device echoes back, so we can prefill the editor.
+  const [location, setLocationState] = useState<string | null>(null)
+  const [weather, setWeatherState] = useState<StockWeather | null>(null)
+
   // Reconnect ("find device") UI state.
   const [reconnecting, setReconnecting] = useState(false)
   const [reconnectMsg, setReconnectMsg] = useState<string | null>(null)
@@ -51,11 +56,15 @@ export default function Settings() {
     } catch {
       setInfoError(true)
     }
-    // Best-effort: also pull which keys are set so the data-sources section reflects the device.
+    // Best-effort: also pull which keys are set (data-sources) plus the weather location/resolved
+    // weather so those sections reflect the device.
     try {
-      setKeysState((await client.getState()).keys)
+      const st = await client.getState()
+      setKeysState(st.keys)
+      setLocationState(st.location)
+      setWeatherState(st.weather)
     } catch {
-      // leave the last-known presence; the section just shows "unknown" until a state read succeeds
+      // leave the last-known values; the sections just show "unknown" until a state read succeeds
     }
   }, [client])
 
@@ -93,6 +102,30 @@ export default function Settings() {
           setKeysState((await client.getState()).keys)
         } catch {
           // ignore — the write succeeded; presence will refresh on the next load
+        }
+        return true
+      } catch {
+        return false
+      }
+    },
+    [client],
+  )
+
+  // Set the weather location live (empty string clears it → weather widget off). Re-reads state so
+  // the resolved-weather line refreshes; the device re-geocodes asynchronously so it may stay
+  // invalid for a poll or two.
+  const updateLocation = useCallback(
+    async (next: string): Promise<boolean> => {
+      if (!client) return false
+      try {
+        await client.setLocation(next)
+        try {
+          const st = await client.getState()
+          setLocationState(st.location)
+          setWeatherState(st.weather)
+        } catch {
+          // write succeeded; the value will refresh on the next load
+          setLocationState(next)
         }
         return true
       } catch {
@@ -218,6 +251,26 @@ export default function Settings() {
             />
           </Section>
 
+          {/* Weather location — plain text, prefilled with the current value. */}
+          <Section title="Weather">
+            <Text style={styles.help}>
+              Show local weather on the board's home screen. Enter a place like “Seoul” or
+              “Paris, FR”. Leave it blank and tap Save to turn the weather widget off.
+            </Text>
+            {weather?.valid ? (
+              <Text style={styles.saved}>
+                {weather.city} · {Math.round(weather.tempC)}°C
+              </Text>
+            ) : location ? (
+              <Text style={styles.help}>Resolving weather for “{location}”…</Text>
+            ) : null}
+            <LocationRow
+              key={location ?? ''}
+              initial={location ?? ''}
+              onSave={updateLocation}
+            />
+          </Section>
+
           {/* Re-run onboarding */}
           <Section title="Setup">
             <Button label="Set up a different board" variant="ghost" onPress={reonboard} />
@@ -312,6 +365,55 @@ function KeyRow({
       {failed ? <Text style={styles.error}>Couldn’t update. Please try again.</Text> : null}
       {done ? <Text style={styles.saved}>Updated.</Text> : null}
       <Button label="Update" variant="secondary" loading={saving} onPress={save} />
+    </View>
+  )
+}
+
+// The weather-location editor. Unlike a key, the location is non-secret so we prefill it with the
+// current value; an empty string is a valid "turn weather off" request and is sent through.
+function LocationRow({
+  initial,
+  onSave,
+}: {
+  initial: string
+  onSave: (value: string) => Promise<boolean>
+}) {
+  const [draft, setDraft] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const [done, setDone] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  const save = async () => {
+    setSaving(true)
+    setDone(false)
+    setFailed(false)
+    const ok = await onSave(draft.trim())
+    setSaving(false)
+    if (ok) setDone(true)
+    else setFailed(true)
+  }
+
+  return (
+    <View style={styles.keyRow}>
+      <View style={styles.hostRow}>
+        <TextInput
+          value={draft}
+          onChangeText={(t) => {
+            setDraft(t)
+            setDone(false)
+            setFailed(false)
+          }}
+          placeholder='e.g. "Seoul" or "Paris, FR"'
+          placeholderTextColor={colors.textFaint}
+          autoCapitalize="words"
+          autoCorrect={false}
+          style={styles.hostInput}
+          onSubmitEditing={save}
+        />
+      </View>
+      {failed ? <Text style={styles.error}>Couldn’t update. Please try again.</Text> : null}
+      {done ? <Text style={styles.saved}>Updated.</Text> : null}
+      <Button label="Save" variant="secondary" loading={saving} onPress={save} />
     </View>
   )
 }

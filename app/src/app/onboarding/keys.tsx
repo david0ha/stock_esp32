@@ -13,7 +13,8 @@ import { colors, radius } from '../../theme'
 // blocks setup. The keys are write-only: the firmware never exposes the stored values back.
 export default function Keys() {
   const router = useRouter()
-  const { finnhubKey, setFinnhubKey, fmpKey, setFmpKey, econUrl, setEconUrl } = useOnboarding()
+  const { finnhubKey, setFinnhubKey, fmpKey, setFmpKey, econUrl, setEconUrl, location, setLocation } =
+    useOnboarding()
 
   const next = () => router.push(ONBOARDING_ROUTES.password)
 
@@ -58,6 +59,14 @@ export default function Keys() {
           placeholder={DEFAULT_ECON_URL}
           hint="Override the calendar base URL (FMP direct or your own proxy). Leave blank to use the default."
           keyboardType="url"
+        />
+
+        <Field
+          label="Weather location (optional)"
+          value={location}
+          onChangeText={setLocation}
+          placeholder='e.g. "Seoul" or "Paris, FR"'
+          hint="Shows local weather on the board's home screen. Leave blank to turn the weather widget off."
         />
       </ScrollView>
     </StepScaffold>

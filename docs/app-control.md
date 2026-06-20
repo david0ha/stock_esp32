@@ -33,7 +33,7 @@ masterham 과 1:1 동일. 펌웨어: `components/provisioning/prov_portal.c`.
 |---|---|---|
 | `GET /api/info` | — | `{ "deviceId", "model", "apSsid" }` |
 | `GET /api/scan` | — | `{ "networks":[{"ssid","rssi","secure"}] }` (캐시 스캔) |
-| `POST /api/provision` | `x-www-form-urlencoded`: `ssid`,`ssid_manual`,`password`,`tickers`,`finnhub_key`,`fmp_key`,`econ_url`(뒤 3개 선택) | `202 {"ok":true,"state":"connecting"}` / `4xx {"ok":false,"error":<code>}` |
+| `POST /api/provision` | `x-www-form-urlencoded`: `ssid`,`ssid_manual`,`password`,`tickers`,`finnhub_key`,`fmp_key`,`econ_url`,`location`(뒤 4개 선택) | `202 {"ok":true,"state":"connecting"}` / `4xx {"ok":false,"error":<code>}` |
 | `GET /api/status` | — | `{ "state":"idle\|connecting\|connected\|failed", "ssid"?, "reason"? }` |
 
 - `provision` 에러 코드: `ssid_empty` `ssid_too_long` `pass_too_long` `too_large` `read_error`.
@@ -77,6 +77,8 @@ masterham 과 1:1 동일. 펌웨어: `components/provisioning/prov_portal.c`.
   "econMode": false, "econWeek": 0, // 경제 캘린더 오버레이 상태
   "refreshSeconds": 30,
   "keys": { "finnhub": true, "fmp": false, "econUrl": true },   // 설정 여부만(값은 노출 안 함)
+  "location": "Seoul",                                          // 설정된 날씨 지역(자유 텍스트)
+  "weather": { "valid": true, "tempC": 21, "city": "Seoul, KR" }, // 지오코딩된 현재 날씨(미해결 시 valid=false)
   "env": { "valid": true, "tempC": 24.3, "humidity": 41.0,
            "batteryValid": true, "batteryV": 4.02, "batteryPct": 88 },
   "watchlist": [
@@ -97,6 +99,7 @@ masterham 과 1:1 동일. 펌웨어: `components/provisioning/prov_portal.c`.
 | `POST /api/stock/refresh` | `{"all":false}` | 현재(또는 전체) 티커 강제 재요청 |
 | `POST /api/stock/watchlist` | `{"tickers":["AAPL","TSLA",...]}` 또는 `{"tickers":"AAPL,TSLA"}` | 워치리스트 교체. **NVS 저장 + 즉시 적용(재부팅 없음)**. 1..16개, 정규화는 `prov_tickers_parse` 와 동일 |
 | `POST /api/stock/keys` | `{"finnhubKey"?,"fmpKey"?,"econUrl"?}` | API 키/URL 라이브 변경. 존재하는 필드만 갱신(빈 문자열=초기화→Kconfig 폴백), NVS 저장 + 즉시 재요청. 값은 반환하지 않음(state 의 `keys` 는 설정 여부만) |
+| `POST /api/stock/location` | `{"location":"Seoul"}` | 날씨 지역 라이브 변경. NVS 저장 + 기기가 즉시 재지오코딩(Open-Meteo, 재부팅 없음). 빈 문자열=날씨 위젯 끔. 해결된 도시/기온은 state 의 `weather` 로 보고 |
 
 - 에러 코드: `bad_json` `index_range` `page_range` `symbol_not_found` `empty_watchlist` `too_many_tickers`.
   추가로 모든 `/api/stock/*` POST 는 본문 리더 공통 에러 `too_large`(본문 초과)·`read_error`(소켓 오류)도

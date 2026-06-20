@@ -60,6 +60,11 @@ int user_app_set_watchlist(const char *csv);
  * at least one field was provided and the update was enqueued. */
 bool user_app_set_keys(const char *finnhub, const char *fmp, const char *econ_url);
 
+/* Set the weather location (free text, e.g. "Seoul"), persisted to NVS and applied live — the
+ * device re-geocodes it (Open-Meteo) without a reboot. An empty string turns the weather widget
+ * off. Returns true if the change was enqueued. */
+bool user_app_set_location(const char *place);
+
 #ifdef __cplusplus
 }
 #endif

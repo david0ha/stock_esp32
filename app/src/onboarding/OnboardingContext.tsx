@@ -17,6 +17,9 @@ interface OnboardingContextValue extends OnboardingState {
   setFmpKey: (key: string) => void
   econUrl: string
   setEconUrl: (url: string) => void
+  /** Optional weather location (free-text place) sent with /api/provision; empty = weather off. */
+  location: string
+  setLocation: (location: string) => void
   /** Identity read from the device's GET /api/info, used to seed the dashboard on completion. */
   deviceInfo: DeviceInfo | null
   setDeviceInfo: (info: DeviceInfo | null) => void
@@ -33,6 +36,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [finnhubKey, setFinnhubKey] = useState('')
   const [fmpKey, setFmpKey] = useState('')
   const [econUrl, setEconUrl] = useState('')
+  const [location, setLocation] = useState('')
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null)
 
   const value = useMemo<OnboardingContextValue>(
@@ -44,6 +48,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       finnhubKey,
       fmpKey,
       econUrl,
+      location,
       deviceInfo,
       setSelectedNetwork,
       setSelectedSecured,
@@ -52,6 +57,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       setFinnhubKey,
       setFmpKey,
       setEconUrl,
+      setLocation,
       setDeviceInfo,
       reset: () => {
         setSelectedNetwork(null)
@@ -61,10 +67,11 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         setFinnhubKey('')
         setFmpKey('')
         setEconUrl('')
+        setLocation('')
         setDeviceInfo(null)
       },
     }),
-    [selectedNetwork, selectedSecured, password, tickers, finnhubKey, fmpKey, econUrl, deviceInfo],
+    [selectedNetwork, selectedSecured, password, tickers, finnhubKey, fmpKey, econUrl, location, deviceInfo],
   )
 
   return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>

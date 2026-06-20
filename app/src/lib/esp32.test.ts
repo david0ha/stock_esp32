@@ -169,6 +169,18 @@ describe('esp32 client — provision', () => {
     expect(calls[0].init?.body).toBe('ssid=Home&password=pw&finnhub_key=k&fmp_key=')
   })
 
+  it('appends an url-encoded location field when provided in opts', async () => {
+    const { client: c, calls } = client([{ status: 202, body: { ok: true } }])
+    await c.provision('Home', 'pw', undefined, { location: 'Paris, FR' })
+    expect(calls[0].init?.body).toBe('ssid=Home&password=pw&location=Paris%2C%20FR')
+  })
+
+  it('omits the location field when not provided in opts', async () => {
+    const { client: c, calls } = client([{ status: 202, body: { ok: true } }])
+    await c.provision('Home', 'pw', undefined, { finnhubKey: 'k' })
+    expect(calls[0].init?.body).toBe('ssid=Home&password=pw&finnhub_key=k')
+  })
+
   it('throws an Esp32Error carrying the firmware error code on 400', async () => {
     const { client: c } = client([{ ok: false, status: 400, body: { ok: false, error: 'pass_too_long' } }])
     await expect(c.provision('Home', 'x')).rejects.toMatchObject({
@@ -292,6 +304,8 @@ describe('esp32 client — getState', () => {
       batteryV: 4.02,
       batteryPct: 88,
     },
+    location: 'Seoul',
+    weather: { valid: true, tempC: 21, city: 'Seoul, KR' },
     watchlist: [
       { symbol: 'AAPL', valid: true, price: 201.5, change: 1.2, percent: 0.6, ageSec: 12 },
       { symbol: 'TSLA', valid: false, price: 0, change: 0, percent: 0, ageSec: -1 },
@@ -346,6 +360,22 @@ describe('esp32 client — getState', () => {
   it('defaults a missing keys block to all-false', async () => {
     const { client: c } = client([{ body: { ...FULL, keys: undefined } }])
     expect((await c.getState()).keys).toEqual({ finnhub: false, fmp: false, econUrl: false })
+  })
+
+  it('parses the location and resolved weather block', async () => {
+    const { client: c } = client([
+      { body: { ...FULL, location: 'Paris', weather: { valid: true, tempC: 14, city: 'Paris, FR' } } },
+    ])
+    const st = await c.getState()
+    expect(st.location).toBe('Paris')
+    expect(st.weather).toEqual({ valid: true, tempC: 14, city: 'Paris, FR' })
+  })
+
+  it('defaults a missing location to "" and a missing weather block to invalid/zero/empty', async () => {
+    const { client: c } = client([{ body: { ...FULL, location: undefined, weather: undefined } }])
+    const st = await c.getState()
+    expect(st.location).toBe('')
+    expect(st.weather).toEqual({ valid: false, tempC: 0, city: '' })
   })
 
   it('rejects with http_error on a non-ok response', async () => {
@@ -490,6 +520,33 @@ describe('esp32 client — setKeys', () => {
   it('maps a thrown fetch to network_error', async () => {
     const { client: c } = client([new TypeError('Network request failed')])
     await expect(c.setKeys({ finnhubKey: 'x' })).rejects.toMatchObject({ code: 'network_error' })
+  })
+})
+
+describe('esp32 client — setLocation', () => {
+  it('POSTs {location} as JSON and resolves on 200 {ok:true}', async () => {
+    const { client: c, calls } = client([{ body: { ok: true } }])
+    await c.setLocation('Seoul')
+    expect(calls[0].url).toBe(`${BASE}/api/stock/location`)
+    expect(calls[0].init?.method).toBe('POST')
+    expect((calls[0].init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    expect(calls[0].init?.body).toBe('{"location":"Seoul"}')
+  })
+
+  it('sends an empty string (clear) as a valid request', async () => {
+    const { client: c, calls } = client([{ body: { ok: true } }])
+    await c.setLocation('')
+    expect(calls[0].init?.body).toBe('{"location":""}')
+  })
+
+  it('throws bad_json carrying the status on a 400 body', async () => {
+    const { client: c } = client([{ ok: false, status: 400, body: { ok: false, error: 'bad_json' } }])
+    await expect(c.setLocation('!!')).rejects.toMatchObject({ code: 'bad_json', status: 400 })
+  })
+
+  it('maps a thrown fetch to network_error', async () => {
+    const { client: c } = client([new TypeError('Network request failed')])
+    await expect(c.setLocation('Seoul')).rejects.toMatchObject({ code: 'network_error' })
   })
 })
 

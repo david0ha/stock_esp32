@@ -53,6 +53,7 @@ export default function Password() {
     finnhubKey,
     fmpKey,
     econUrl,
+    location,
     setDeviceInfo,
   } = useOnboarding()
   // "Other…" leaves selectedNetwork null; the user types the SSID here.
@@ -93,10 +94,13 @@ export default function Password() {
       // Optional data-source keys entered earlier: send a trimmed value only when non-empty so an
       // untouched field is omitted (the device falls back to its compiled default).
       const trimmedEcon = econUrl.trim()
+      const trimmedLocation = location.trim()
       const keyOpts = {
         ...(finnhubKey.trim() ? { finnhubKey: finnhubKey.trim() } : {}),
         ...(fmpKey.trim() ? { fmpKey: fmpKey.trim() } : {}),
         ...(trimmedEcon ? { econUrl: trimmedEcon } : {}),
+        // Weather location is optional; only send it when the user typed something.
+        ...(trimmedLocation ? { location: trimmedLocation } : {}),
       }
       await esp32.provision(
         ssid,
