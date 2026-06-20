@@ -37,14 +37,15 @@
 /* horizontal band dividers */
 #define DIV_HEADER   95
 #define DIV_FORECAST 188
-#define DIV_ECON     246
+#define DIV_ECON     264         /* dropped so the econ band fits 2-line rows  */
 
 #define F_CLOCK (&ui_font_mont_bold_46)      /* hero clock            */
 #define F_SYM   (&ui_font_mont_bold_20)      /* sidebar symbol        */
-#define F_BIG   (&lv_font_montserrat_20)     /* weather temp / status */
+#define F_BIG   (&lv_font_montserrat_20)     /* weather temp          */
 #define F_MED   (&lv_font_montserrat_16)     /* price, date           */
 #define F_SML   (&lv_font_montserrat_14)     /* change, city, captions*/
-#define F_TINY  (&lv_font_montserrat_12)     /* dense econ rows        */
+#define F_STAT  (&lv_font_montserrat_16)     /* status bar (humid/temp/batt) */
+#define F_TINY  (&lv_font_montserrat_10)     /* dense 2-line econ rows */
 
 static const lv_color_t BLACK = LV_COLOR_MAKE(0, 0, 0);
 static const lv_color_t WHITE = LV_COLOR_MAKE(0xff, 0xff, 0xff);
@@ -215,64 +216,72 @@ static void build_forecast(lv_obj_t *p) {
 /* ---- econ rows ---------------------------------------------------------- */
 
 #define EC_X    MX          /* full-width: text starts at the main-area edge */
-#define EC_Y0   193         /* first row's top y                          */
-#define EC_DY   17          /* row pitch (3 rows fit the 188..246 band)   */
-#define EC_VALW 58          /* right-aligned estimate/actual column width  */
+#define EC_Y0   192         /* first row's top y                          */
+#define EC_DY   24          /* row pitch: two 11px lines + breathing gap   */
+#define EC_LW   (RX - EC_X) /* full content width available to a row       */
 
-/* A one-line label that ellipsizes on overflow: DOT mode only truncates (rather
- * than wrapping and growing) when the height is pinned to a single line. The
- * dense 12px font lets a long event name fit before it ever needs the dots. */
-static lv_obj_t *eline(lv_obj_t *p, int w) {
+/* A label sized to `lines` rows of F_TINY. A single-line label DOT-truncates;
+ * a multi-line one WRAPs on spaces so a long event name spills onto the second
+ * row (and only dots if it still overflows two lines). The tiny 10px font keeps
+ * three two-line rows inside the 188..264 band. */
+static lv_obj_t *eline(lv_obj_t *p, int w, int lines, lv_text_align_t al) {
     lv_obj_t *l = lbl(p, F_TINY);
     lv_obj_set_width(l, w);
-    lv_obj_set_height(l, lv_font_get_line_height(F_TINY));
-    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(l, lines * lv_font_get_line_height(F_TINY));
+    lv_label_set_long_mode(l, lines > 1 ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(l, al, 0);
     lv_label_set_text(l, "");
     return l;
 }
 
+/* Each row is two 10px lines tall. The event name owns the FULL width on the
+ * top line and only wraps onto the bottom line when it genuinely overruns — so
+ * a name like "S&P Global Manufacturing PMI" stays on one line instead of
+ * wrapping early. Forecast + actual ride the bottom line, right-aligned, where
+ * they get the whole width and never have to truncate (the old narrow column
+ * clipped "Fcst 4.50% Act 4.25%"). */
 static void build_econ(lv_obj_t *p) {
+    int lh = lv_font_get_line_height(F_TINY);
     for (int i = 0; i < HOME_ECON_MAX; i++) {
         int y = EC_Y0 + i * EC_DY;
 
-        S.ec[i].name = eline(p, RX - EC_X - EC_VALW - 6);
+        S.ec[i].name = eline(p, EC_LW, 2, LV_TEXT_ALIGN_LEFT);
         lv_obj_align(S.ec[i].name, LV_ALIGN_TOP_LEFT, EC_X, y);
 
-        S.ec[i].val = eline(p, EC_VALW);
-        lv_obj_set_style_text_align(S.ec[i].val, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_align(S.ec[i].val, LV_ALIGN_TOP_RIGHT, -(W - RX), y);
+        S.ec[i].val = eline(p, EC_LW, 1, LV_TEXT_ALIGN_RIGHT);
+        lv_obj_align(S.ec[i].val, LV_ALIGN_TOP_LEFT, EC_X, y + lh);
     }
 }
 
 /* ---- status bar --------------------------------------------------------- */
 
-#define ST_Y 262
+#define ST_Y 270          /* dropped + shrunk to hand its old room to the econ band */
 
 static void build_status(lv_obj_t *p) {
     int seg = (W - SB) / 3;
     int c0 = SB + seg / 2, c1 = SB + seg + seg / 2, c2 = SB + 2 * seg + seg / 2;
 
-    lv_obj_t *d = ui_icon(p, ICON_DROP, 22, 0);
-    lv_obj_align(d, LV_ALIGN_TOP_LEFT, c0 - 34, ST_Y);
-    S.humid = lbl(p, F_BIG);
+    lv_obj_t *d = ui_icon(p, ICON_DROP, 18, 0);
+    lv_obj_align(d, LV_ALIGN_TOP_LEFT, c0 - 30, ST_Y + 1);
+    S.humid = lbl(p, F_STAT);
     lv_label_set_text(S.humid, "--");
-    lv_obj_align(S.humid, LV_ALIGN_TOP_LEFT, c0 - 6, ST_Y + 2);
+    lv_obj_align(S.humid, LV_ALIGN_TOP_LEFT, c0 - 4, ST_Y + 3);
 
-    lv_obj_t *t = ui_icon(p, ICON_THERMO, 22, 0);
-    lv_obj_align(t, LV_ALIGN_TOP_LEFT, c1 - 34, ST_Y);
-    S.temp_in = lbl(p, F_BIG);
+    lv_obj_t *t = ui_icon(p, ICON_THERMO, 18, 0);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, c1 - 30, ST_Y + 1);
+    S.temp_in = lbl(p, F_STAT);
     lv_label_set_text(S.temp_in, "--");
-    lv_obj_align(S.temp_in, LV_ALIGN_TOP_LEFT, c1 - 6, ST_Y + 2);
+    lv_obj_align(S.temp_in, LV_ALIGN_TOP_LEFT, c1 - 4, ST_Y + 3);
 
     /* nudged left so a 3-digit "100%" still clears the right panel edge */
-    S.batt = lbl(p, F_BIG);
+    S.batt = lbl(p, F_STAT);
     lv_label_set_text(S.batt, "--");
-    lv_obj_align(S.batt, LV_ALIGN_TOP_LEFT, c2 - 10, ST_Y + 2);
-    S.batt_icon = ui_icon(p, ICON_BATTERY, 26, 80);
-    lv_obj_align(S.batt_icon, LV_ALIGN_TOP_LEFT, c2 - 44, ST_Y + 1);
+    lv_obj_align(S.batt, LV_ALIGN_TOP_LEFT, c2 - 8, ST_Y + 3);
+    S.batt_icon = ui_icon(p, ICON_BATTERY, 22, 80);
+    lv_obj_align(S.batt_icon, LV_ALIGN_TOP_LEFT, c2 - 38, ST_Y + 2);
 
-    vline(p, SB + seg,     ST_Y - 2, ST_Y + 26, 1, true);
-    vline(p, SB + 2 * seg, ST_Y - 2, ST_Y + 26, 1, true);
+    vline(p, SB + seg,     ST_Y - 1, ST_Y + 23, 1, true);
+    vline(p, SB + 2 * seg, ST_Y - 1, ST_Y + 23, 1, true);
 }
 
 /* ---- public API --------------------------------------------------------- */
@@ -411,16 +420,20 @@ void ui_home_set_econ(const econ_event_t *evs, const char *const *when_labels, i
         snprintf(buf, sizeof(buf), "[%s] %s", w, ev->event[0] ? ev->event : "--");
         lv_label_set_text(S.ec[i].name, buf);
 
-        /* est -> act once the actual is released; otherwise just the estimate.
-         * Plain ASCII so it renders in the stock Montserrat (no arrow glyph). */
-        const char *est = ev->estimate[0] ? ev->estimate : "";
-        const char *act = ev->actual[0] && strcmp(ev->actual, "--") != 0 ? ev->actual : "";
-        if (act[0])
-            snprintf(buf, sizeof(buf), "%s>%s", est[0] ? est : "?", act);
-        else if (est[0])
-            snprintf(buf, sizeof(buf), "%s", est);
-        else
-            buf[0] = '\0';
+        /* Show forecast and actual together (labelled like the econ detail
+         * page: "Fcst" / "Act" / "Prev"). Most home rows are *upcoming* events,
+         * so the actual is usually absent ("--") and sometimes the forecast is
+         * too; rather than leave the row blank, fall back to the previous reading
+         * so there's always a number on screen. Plain ASCII for the stock
+         * Montserrat. A bare "--" field counts as absent. */
+        const char *est  = ev->estimate[0] && strcmp(ev->estimate, "--") != 0 ? ev->estimate : NULL;
+        const char *act  = ev->actual[0]   && strcmp(ev->actual,   "--") != 0 ? ev->actual   : NULL;
+        const char *prev = ev->previous[0] && strcmp(ev->previous, "--") != 0 ? ev->previous : NULL;
+        if (est && act)   snprintf(buf, sizeof(buf), "Fcst %s   Act %s", est, act);
+        else if (act)     snprintf(buf, sizeof(buf), "Act %s", act);
+        else if (est)     snprintf(buf, sizeof(buf), "Fcst %s", est);
+        else if (prev)    snprintf(buf, sizeof(buf), "Prev %s", prev);
+        else              buf[0] = '\0';
         lv_label_set_text(S.ec[i].val, buf);
 
         lv_obj_clear_flag(S.ec[i].name, LV_OBJ_FLAG_HIDDEN);

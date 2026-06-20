@@ -22,6 +22,9 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -29,6 +32,17 @@
 #define HTTP_MAX_RESP (320 * 1024)   /* hard cap; metric=all is ~240KB */
 
 static const char *TAG = "http";
+
+/* Global TLS-connect gate (NOT __thread): held only across a perform() that will
+ * (re)connect, so at most one heavy ECDSA cert-chain verify runs at a time even
+ * if the boot stagger drifts. Same-host keep-alive performs skip it, so the hot
+ * path stays lock-free. Created once by http_port_init() before any fetch task
+ * starts (so http_get never has to lazily create it under a race). */
+static SemaphoreHandle_t s_tls_connect_lock;
+
+void http_port_init(void) {
+    if (!s_tls_connect_lock) s_tls_connect_lock = xSemaphoreCreateMutex();
+}
 
 typedef struct { char *buf; size_t len; size_t cap; bool oom; } acc_t;
 
@@ -74,6 +88,11 @@ char *http_get(const char *url, int *out_status) {
     char host[sizeof(t_host)];
     host_of(url, host, sizeof(host));
 
+    /* Will this request open a new TLS connection (no handle, no live connection,
+     * or a host change)? If so we serialize the perform below so two tasks don't
+     * run their ECDSA cert verify at once. Same-host keep-alive -> false -> no lock. */
+    bool will_handshake = (!t_client) || (t_host[0] == '\0') || (strcmp(host, t_host) != 0);
+
     /* Different host than the connection we're holding open -> drop the
      * connection but keep the handle so we can reconnect cheaply. */
     if (t_client && strcmp(host, t_host) != 0) {
@@ -89,6 +108,13 @@ char *http_get(const char *url, int *out_status) {
             .timeout_ms        = 15000,
             .buffer_size       = 4096,
             .keep_alive_enable = true,   /* TCP keepalive: detect dead idle sockets */
+#if CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS
+            /* Save the negotiated TLS session so a later reconnect to the SAME host
+             * resumes (abbreviated handshake, skips the ECDSA cert verify). Helps the
+             * single-host slow tasks (econ 1h, weather 30m) whose keep-alive the
+             * server drops while idle; the cert bundle still gates a full handshake. */
+            .save_client_session = true,
+#endif
             .user_agent        = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
                                  "Chrome/120 Safari/537.36",
@@ -102,8 +128,11 @@ char *http_get(const char *url, int *out_status) {
     esp_http_client_set_url(t_client, url);
     esp_http_client_set_user_data(t_client, &a);
 
+    /* Serialize only the (re)connect+handshake; same-host reuse runs lock-free. */
+    if (will_handshake && s_tls_connect_lock) xSemaphoreTake(s_tls_connect_lock, portMAX_DELAY);
     esp_err_t err = esp_http_client_perform(t_client);
     int code = esp_http_client_get_status_code(t_client);
+    if (will_handshake && s_tls_connect_lock) xSemaphoreGive(s_tls_connect_lock);
 
     if (out_status) *out_status = code;
     if (err != ESP_OK || a.oom) {
