@@ -17,6 +17,7 @@
 #define FAIL_BIT      BIT1
 #define MAX_RETRY     6
 #define SCAN_PERIOD_US (20 * 1000 * 1000)   // re-scan every 20s while the portal is up
+#define PROV_AP_CHANNEL 1                    // SoftAP channel (single radio shares it with STA)
 
 static const char *TAG = "prov_wifi";
 
@@ -171,7 +172,11 @@ void prov_wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_ms)
+// Shared join logic. When `keep_ap` is false the radio is switched to station-only mode (the
+// boot path). When true the current mode is left as-is so a running SoftAP survives the join
+// (the app-driven credential check); on failure the SoftAP channel is restored for a retry.
+static bool connect_impl(const char *ssid, const char *password, uint32_t timeout_ms,
+                         bool keep_ap)
 {
     wifi_config_t wc = {0};
     strlcpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid));
@@ -181,14 +186,16 @@ bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_
     wc.sta.pmf_cfg.capable = true;
     wc.sta.pmf_cfg.required = false;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    if (!keep_ap) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    }
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
 
     s_retries = 0;
     s_connecting = true;
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAIL_BIT);
 
-    ESP_LOGI(TAG, "connecting to '%s'", ssid);
+    ESP_LOGI(TAG, "connecting to '%s'%s", ssid, keep_ap ? " (SoftAP kept up)" : "");
     esp_wifi_connect();
 
     EventBits_t bits = xEventGroupWaitBits(
@@ -200,12 +207,37 @@ bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_
     if (!ok && (xEventGroupGetBits(s_events) & CONNECTED_BIT)) {
         ok = true;
     }
+    // Channel asymmetry (single radio): on SUCCESS the SoftAP has followed the target AP onto its
+    // channel and we deliberately do NOT pull it back — re-pinning PROV_AP_CHANNEL would break the
+    // just-established STA link. So a phone parked on channel 1 may lose the SoftAP and never read
+    // the "connected" status; the companion app treats post-202 AP loss as probable success and
+    // re-confirms over the LAN (mDNS). Only the FAILURE path below restores channel 1, because
+    // there the link is being torn down anyway and the phone must read "failed" to retry.
     if (!ok) {
         s_connecting = false;
         esp_wifi_disconnect();
+        if (keep_ap) {
+            // The failed join dragged the shared radio to the target AP's channel. Pull the
+            // SoftAP back to its own channel so the phone (still trying to reach the portal on
+            // PROV_AP_CHANNEL) can re-associate and read the "failed" status.
+            esp_err_t cerr = esp_wifi_set_channel(PROV_AP_CHANNEL, WIFI_SECOND_CHAN_NONE);
+            if (cerr != ESP_OK) {
+                ESP_LOGW(TAG, "could not restore SoftAP channel: %s", esp_err_to_name(cerr));
+            }
+        }
         ESP_LOGW(TAG, "connect to '%s' failed", ssid);
     }
     return ok;
+}
+
+bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_ms)
+{
+    return connect_impl(ssid, password, timeout_ms, false);
+}
+
+bool prov_wifi_connect_keep_ap(const char *ssid, const char *password, uint32_t timeout_ms)
+{
+    return connect_impl(ssid, password, timeout_ms, true);
 }
 
 void prov_wifi_start_ap(const char *ap_ssid)
@@ -216,7 +248,7 @@ void prov_wifi_start_ap(const char *ap_ssid)
     wifi_config_t wc = {0};
     strlcpy((char *)wc.ap.ssid, ap_ssid, sizeof(wc.ap.ssid));
     wc.ap.ssid_len = strlen(ap_ssid);
-    wc.ap.channel = 1;
+    wc.ap.channel = PROV_AP_CHANNEL;
     wc.ap.max_connection = 4;
     wc.ap.authmode = WIFI_AUTH_OPEN;  // open network for easy join
 

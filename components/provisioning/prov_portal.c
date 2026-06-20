@@ -1,25 +1,40 @@
 #include "prov_portal.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "lwip/sockets.h"
 
 #include "prov_wifi.h"
 #include "form_parse.h"
+#include "prov_json.h"
 
 static const char *TAG = "prov_portal";
 
 // Embedded setup page (see portal.html). EMBED_TXTFILES NUL-terminates it.
 extern const char portal_html_start[] asm("_binary_portal_html_start");
 
-static prov_config_t          s_current;
-static bool                   s_have_current;
-static prov_portal_save_cb_t  s_on_save;
-static void                  *s_user;
+static prov_config_t              s_current;
+static bool                       s_have_current;
+static prov_portal_save_cb_t      s_on_save;
+static prov_portal_provision_cb_t s_on_provision;
+static void                      *s_user;
+
+// Identity served by GET /api/info (copied from the caller's prov_portal_info_t at start).
+static char s_device_id[128];
+static char s_model[32];
+static char s_ap_ssid[40];
+
+// Status reported by GET /api/status, written by the connect-test task via
+// prov_portal_set_status and read by the HTTP task. Guarded by s_status_mtx.
+static SemaphoreHandle_t   s_status_mtx;
+static prov_portal_state_t s_state;
+static char                s_status_ssid[PROV_SSID_MAX_LEN + 1];
+static char                s_status_reason[32];
 
 // ---------------------------------------------------------------------------
 // HTTP handlers
@@ -37,6 +52,31 @@ static void                  *s_user;
 static void no_keepalive(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Connection", "close");
+}
+
+// Read the full request body into `buf` (NUL-terminated). Returns the byte count, -1 if the
+// body exceeds `bufsz`-1 (caller should reply 413), or -2 on a socket read error (reply 400).
+// Rejecting oversize bodies rather than truncating avoids leaving unread bytes in the stream.
+static int read_body(httpd_req_t *req, char *buf, size_t bufsz)
+{
+    if (req->content_len > bufsz - 1) {
+        return -1;
+    }
+    int total = 0;
+    int remaining = req->content_len;
+    while (remaining > 0) {
+        int r = httpd_req_recv(req, buf + total, remaining);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;   // transient recv timeout/interrupt — retry rather than abort the body
+        }
+        if (r <= 0) {
+            return -2;
+        }
+        total += r;
+        remaining -= r;
+    }
+    buf[total] = '\0';
+    return total;
 }
 
 // Escape text for an HTML attribute/text context (&, <, >, ", '). Always NUL-terminates;
@@ -256,40 +296,156 @@ static esp_err_t save_post(httpd_req_t *req)
     return rc;
 }
 
-// Send a 302 to the portal root. Shared by the explicit OS-probe handlers and the catch-all
-// 404 handler. Connection: close — iOS fires probes in rapid parallel bursts and idle
-// keep-alive sockets would crowd out the real page requests.
-static esp_err_t redirect_to_portal(httpd_req_t *req)
+// ---------------------------------------------------------------------------
+// JSON API (driven by the companion mobile app over the SoftAP)
+// ---------------------------------------------------------------------------
+
+static esp_err_t send_json(httpd_req_t *req, const char *status_line, const char *body)
 {
     no_keepalive(req);
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "redirect", HTTPD_RESP_USE_STRLEN);
+    if (status_line != NULL) {
+        httpd_resp_set_status(req, status_line);
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, body);
 }
 
-// Explicit handlers for the well-known OS captive-detection probe URLs. Registering them
-// (instead of letting them fall through to the 404 handler) keeps the log clean: httpd logs
-// a "URI not found" warning for every unregistered URI before invoking the error handler.
-static esp_err_t probe_get(httpd_req_t *req)
+static const char *state_str(prov_portal_state_t s)
 {
-    ESP_LOGI(TAG, "captive probe %s -> /", req->uri);
-    return redirect_to_portal(req);
+    switch (s) {
+        case PROV_PORTAL_CONNECTING: return "connecting";
+        case PROV_PORTAL_CONNECTED:  return "connected";
+        case PROV_PORTAL_FAILED:     return "failed";
+        case PROV_PORTAL_IDLE:
+        default:                     return "idle";
+    }
 }
 
-// Catch-all for any captive-detection URL not registered above (still redirected to setup).
-static esp_err_t captive_404(httpd_req_t *req, httpd_err_code_t err)
+// GET /api/info — device identity so the app can register the device to the user.
+static esp_err_t api_info_get(httpd_req_t *req)
 {
-    (void)err;
-    ESP_LOGI(TAG, "captive redirect (404) %s -> /", req->uri);
-    return redirect_to_portal(req);
+    char body[512];
+    if (prov_json_info(body, sizeof(body), s_device_id, s_model, s_ap_ssid) < 0) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "info");
+    }
+    return send_json(req, NULL, body);
 }
+
+// GET /api/scan — the cached network list as JSON (real rssi/secure, unlike the HTML glyphs).
+static esp_err_t api_scan_get(httpd_req_t *req)
+{
+    prov_ap_t aps[24];
+    size_t count = prov_wifi_scan_cached(aps, sizeof(aps) / sizeof(aps[0]));
+    char body[2048];
+    if (prov_json_networks(aps, count, body, sizeof(body)) < 0) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "scan");
+    }
+    ESP_LOGI(TAG, "GET /api/scan -> %u network(s)", (unsigned)count);
+    return send_json(req, NULL, body);
+}
+
+// GET /api/status — the current connect-test state for the app to poll.
+static esp_err_t api_status_get(httpd_req_t *req)
+{
+    prov_portal_state_t st = PROV_PORTAL_IDLE;
+    char ssid[PROV_SSID_MAX_LEN + 1] = {0};
+    char reason[32] = {0};
+    if (s_status_mtx != NULL && xSemaphoreTake(s_status_mtx, pdMS_TO_TICKS(100)) == pdTRUE) {
+        st = s_state;
+        strlcpy(ssid, s_status_ssid, sizeof(ssid));
+        strlcpy(reason, s_status_reason, sizeof(reason));
+        xSemaphoreGive(s_status_mtx);
+    }
+    char body[256];
+    if (prov_json_status(body, sizeof(body), state_str(st),
+                         ssid[0] ? ssid : NULL, reason[0] ? reason : NULL) < 0) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status");
+    }
+    return send_json(req, NULL, body);
+}
+
+// POST /api/provision (application/x-www-form-urlencoded: ssid, ssid_manual, password, tickers)
+// — validate, then kick off an asynchronous connect test via the on_provision callback. Replies
+// 202 immediately; the app polls GET /api/status for connected/failed. Unlike the reference
+// JSON API, this board also provisions a ticker watchlist, so the `tickers` field is parsed into
+// the cfg alongside the credentials.
+static esp_err_t api_provision_post(httpd_req_t *req)
+{
+    // Larger than the HTML form: the app also sends the (URL-encoded) econ proxy URL + API keys.
+    char body[2048];
+    int blen = read_body(req, body, sizeof(body));
+    if (blen == -1) {
+        return send_json(req, "413 Payload Too Large", "{\"ok\":false,\"error\":\"too_large\"}");
+    }
+    if (blen < 0) {
+        return send_json(req, "400 Bad Request", "{\"ok\":false,\"error\":\"read_error\"}");
+    }
+
+    char ssid[64] = {0};
+    char ssid_manual[64] = {0};
+    char password[96] = {0};
+    char tickers[256] = {0};
+    char finnhub[80] = {0};
+    char fmp[80] = {0};
+    char econ_url[256] = {0};
+    prov_form_get_field(body, "ssid", ssid, sizeof(ssid));
+    prov_form_get_field(body, "ssid_manual", ssid_manual, sizeof(ssid_manual));
+    prov_form_get_field(body, "password", password, sizeof(password));
+    prov_form_get_field(body, "tickers", tickers, sizeof(tickers));
+    prov_form_get_field(body, "finnhub_key", finnhub, sizeof(finnhub));
+    prov_form_get_field(body, "fmp_key", fmp, sizeof(fmp));
+    prov_form_get_field(body, "econ_url", econ_url, sizeof(econ_url));
+    // "Other network…" selected → the real SSID is in the manual field, not the sentinel.
+    if (strcmp(ssid, "__manual__") == 0) {
+        strlcpy(ssid, ssid_manual, sizeof(ssid));
+    }
+
+    const char *err = NULL;
+    switch (prov_validate_credentials(ssid, password)) {
+        case PROV_CRED_SSID_EMPTY:    err = "ssid_empty";    break;
+        case PROV_CRED_SSID_TOO_LONG: err = "ssid_too_long"; break;
+        case PROV_CRED_PASS_TOO_LONG: err = "pass_too_long"; break;
+        case PROV_CRED_OK:                                   break;
+    }
+    if (err != NULL) {
+        char resp[64];
+        snprintf(resp, sizeof(resp), "{\"ok\":false,\"error\":\"%s\"}", err);
+        return send_json(req, "400 Bad Request", resp);
+    }
+
+    prov_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    strlcpy(cfg.ssid, ssid, sizeof(cfg.ssid));
+    strlcpy(cfg.password, password, sizeof(cfg.password));
+    prov_tickers_parse(&cfg, tickers);
+    strlcpy(cfg.finnhub_key, finnhub, sizeof(cfg.finnhub_key));
+    strlcpy(cfg.fmp_key, fmp, sizeof(cfg.fmp_key));
+    strlcpy(cfg.econ_url, econ_url, sizeof(cfg.econ_url));
+
+    ESP_LOGI(TAG, "POST /api/provision: ssid='%s', %u tickers — starting connect test",
+             cfg.ssid, (unsigned)cfg.ticker_count);
+    // NOTE: status is moved to CONNECTING inside on_app_provision, only after its duplicate guard
+    // accepts — setting it here would let a duplicate/retry submit clobber a terminal status.
+
+    // Reply 202 BEFORE the (blocking, channel-hopping) connect test starts, so the phone gets
+    // the response while still associated; it then polls GET /api/status for the outcome.
+    esp_err_t rc = send_json(req, "202 Accepted", "{\"ok\":true,\"state\":\"connecting\"}");
+    if (s_on_provision != NULL) {
+        s_on_provision(&cfg, s_user);
+    }
+    return rc;
+}
+
+// NOTE: the captive-portal auto-popup (DNS hijack + OS-probe 302 redirects) was intentionally
+// removed — the companion app drives provisioning over the JSON API at a fixed 192.168.4.1, so
+// joining the SoftAP no longer triggers the "Sign in to Wi-Fi network" sheet. The browser setup
+// page is still reachable directly at http://192.168.4.1/ as a fallback.
 
 static void start_http(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 16;  // "/" + "/save" + the OS captive-probe URLs below
+    config.max_uri_handlers = 8;  // "/" + "/save" + 4 "/api/*"
     config.lru_purge_enable = true;
     // The captive WebView issues requests slowly and in bursts; the 5s default tears half-read
     // sockets down with recv errno 104. xiaozhi's esp-wifi-connect uses 15s for the same reason.
@@ -306,101 +462,58 @@ static void start_http(void)
     const httpd_uri_t routes[] = {
         {.uri = "/",     .method = HTTP_GET,  .handler = index_get},
         {.uri = "/save", .method = HTTP_POST, .handler = save_post},
-        // OS captive-detection probes — redirect to the portal. Registered explicitly so they
-        // don't spam the log with "URI not found"; anything else still hits captive_404.
-        {.uri = "/hotspot-detect.html",       .method = HTTP_GET, .handler = probe_get},  // iOS/macOS
-        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = probe_get},  // iOS/macOS
-        {.uri = "/success.html",              .method = HTTP_GET, .handler = probe_get},  // iOS
-        {.uri = "/generate_204",              .method = HTTP_GET, .handler = probe_get},  // Android
-        {.uri = "/gen_204",                   .method = HTTP_GET, .handler = probe_get},  // Android
-        {.uri = "/ncsi.txt",                  .method = HTTP_GET, .handler = probe_get},  // Windows
-        {.uri = "/connecttest.txt",           .method = HTTP_GET, .handler = probe_get},  // Windows
-        {.uri = "/redirect",                  .method = HTTP_GET, .handler = probe_get},  // Windows
-        {.uri = "/canonical.html",            .method = HTTP_GET, .handler = probe_get},  // Firefox
+        // JSON API the companion app drives over the SoftAP (no OS captive popup of their own).
+        {.uri = "/api/info",      .method = HTTP_GET,  .handler = api_info_get},
+        {.uri = "/api/scan",      .method = HTTP_GET,  .handler = api_scan_get},
+        {.uri = "/api/status",    .method = HTTP_GET,  .handler = api_status_get},
+        {.uri = "/api/provision", .method = HTTP_POST, .handler = api_provision_post},
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);
     }
-    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_404);
 }
 
 // ---------------------------------------------------------------------------
-// DNS hijack: answer every A query with the SoftAP IP so the OS opens the portal.
-// ---------------------------------------------------------------------------
 
-static void dns_task(void *arg)
+void prov_portal_set_status(prov_portal_state_t state, const char *ssid, const char *reason)
 {
-    (void)arg;
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) {
-        ESP_LOGE(TAG, "dns socket failed");
-        vTaskDelete(NULL);
+    if (s_status_mtx == NULL) {
         return;
     }
-    struct sockaddr_in bind_addr = {0};
-    bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = htons(53);
-    bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
-        ESP_LOGE(TAG, "dns bind failed");
-        close(sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    uint8_t pkt[512];
-    while (1) {
-        struct sockaddr_in client;
-        socklen_t clen = sizeof(client);
-        int n = recvfrom(sock, pkt, sizeof(pkt), 0, (struct sockaddr *)&client, &clen);
-        if (n < 12) {
-            continue;  // smaller than a DNS header
-        }
-
-        pkt[2] = 0x81;  // QR=1, recursion desired preserved-ish
-        pkt[3] = 0x80;  // RA=1, RCODE=0
-        pkt[6] = 0x00;  // ANCOUNT hi
-        pkt[7] = 0x01;  // ANCOUNT lo = 1
-        pkt[8] = 0x00;  // NSCOUNT
-        pkt[9] = 0x00;
-        pkt[10] = 0x00;  // ARCOUNT (drop any EDNS OPT)
-        pkt[11] = 0x00;
-
-        // Walk the question's QNAME labels to find where the answer should start.
-        int q = 12;
-        while (q < n && pkt[q] != 0) {
-            q += pkt[q] + 1;
-        }
-        q += 1;  // terminating zero label
-        q += 4;  // QTYPE + QCLASS
-        if (q <= 12 || q + 16 > (int)sizeof(pkt) || q > n) {
-            continue;  // malformed / oversized
-        }
-
-        int p = q;
-        pkt[p++] = 0xC0; pkt[p++] = 0x0C;             // name -> pointer to offset 12
-        pkt[p++] = 0x00; pkt[p++] = 0x01;             // TYPE A
-        pkt[p++] = 0x00; pkt[p++] = 0x01;             // CLASS IN
-        pkt[p++] = 0x00; pkt[p++] = 0x00;
-        pkt[p++] = 0x00; pkt[p++] = 0x1C;             // TTL 28s
-        pkt[p++] = 0x00; pkt[p++] = 0x04;             // RDLENGTH 4
-        pkt[p++] = 192; pkt[p++] = 168; pkt[p++] = 4; pkt[p++] = 1;  // 192.168.4.1
-
-        sendto(sock, pkt, p, 0, (struct sockaddr *)&client, clen);
+    if (xSemaphoreTake(s_status_mtx, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_state = state;
+        strlcpy(s_status_ssid, ssid ? ssid : "", sizeof(s_status_ssid));
+        strlcpy(s_status_reason, reason ? reason : "", sizeof(s_status_reason));
+        xSemaphoreGive(s_status_mtx);
     }
 }
 
-// ---------------------------------------------------------------------------
-
-void prov_portal_start(const prov_config_t *current, prov_portal_save_cb_t on_save, void *user)
+void prov_portal_start(const prov_config_t *current,
+                       prov_portal_save_cb_t on_save,
+                       prov_portal_provision_cb_t on_provision,
+                       const prov_portal_info_t *info,
+                       void *user)
 {
     s_have_current = (current != NULL);
     if (current != NULL) {
         s_current = *current;
     }
     s_on_save = on_save;
+    s_on_provision = on_provision;
     s_user = user;
 
+    if (info != NULL) {
+        strlcpy(s_device_id, info->device_id ? info->device_id : "", sizeof(s_device_id));
+        strlcpy(s_model, info->model ? info->model : "", sizeof(s_model));
+        strlcpy(s_ap_ssid, info->ap_ssid ? info->ap_ssid : "", sizeof(s_ap_ssid));
+    }
+
+    if (s_status_mtx == NULL) {
+        s_status_mtx = xSemaphoreCreateMutex();
+    }
+    s_state = PROV_PORTAL_IDLE;
+    s_status_ssid[0] = '\0';
+    s_status_reason[0] = '\0';
+
     start_http();
-    xTaskCreate(dns_task, "prov_dns", 4096, NULL, 5, NULL);
 }

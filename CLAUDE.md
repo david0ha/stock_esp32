@@ -28,9 +28,12 @@ idf.py -p <PORT> flash monitor # 플래시 + 시리얼 모니터 (Ctrl+] 로 종
 > **프로젝트 구조**: 이 저장소 루트가 곧 ESP-IDF 프로젝트다 — `CMakeLists.txt`·`main/`·`components/`
 > 가 루트에 있으니 `idf.py` 는 **저장소 루트에서** 실행한다. 펌웨어 앱은 `components/stock_core`
 > (이식성 코어 + 디바이스 포트) + `components/user_app`(앱 글루), WiFi/티커를 캡티브 포털로
-> 설정하는 `components/provisioning`(WiFi STA·SoftAP·NVS·SNTP `net_time` 포함), 보드 없이 UI를
-> 확인하는 데스크톱 시뮬레이터는 `sim/`, 벤더링한 cJSON 은 `third_party/` 에 있다. 자세한 내용은
-> [docs/stock-app.md](docs/stock-app.md).
+> 설정하는 `components/provisioning`(WiFi STA·SoftAP·NVS·SNTP `net_time` 포함, 컴패니언 앱용
+> `/api/*` JSON 프로비저닝 API 포함), STA 모드에서 앱이 주식 기능을 제어하도록 HTTP/JSON +
+> mDNS(`tickerboard.local`) 서버를 띄우는 `components/stock_api`, 로컬 전용 React Native 컴패니언
+> 앱은 `app/`, 보드 없이 UI를 확인하는 데스크톱 시뮬레이터는 `sim/`, 벤더링한 cJSON 은
+> `third_party/` 에 있다. 자세한 내용은 [docs/stock-app.md](docs/stock-app.md) ·
+> [docs/app-control.md](docs/app-control.md).
 
 ## 타겟 보드 한눈에 보기
 
@@ -64,6 +67,7 @@ SD `CMD=21, CLK=38, D0=39` · UART0 `TX=43, RX=44`. 전체는 [docs/pinout.md](d
 - [docs/graphics.md](docs/graphics.md) — 1-bit 그래픽 렌더링 방식(즉시모드 GFX vs LVGL) 및 선택 가이드
 - [docs/simulator.md](docs/simulator.md) — 보드 없이 LVGL UI를 확인하는 데스크톱 시뮬레이터(`sim/`)
 - [docs/econ-proxy-deployment.md](docs/econ-proxy-deployment.md) — 경제 캘린더 프록시(`tools/econ_proxy`, 포트 8442) 배포·검토 가이드(Mac mini/리눅스 VM)
+- [docs/app-control.md](docs/app-control.md) — 로컬 전용 RN 컴패니언 앱(`app/`) ↔ 펌웨어 HTTP/JSON 제어 계약(프로비저닝 `/api/*` + 스톡 제어 `/api/stock/*` + mDNS)
 - [docs/references.md](docs/references.md) — 공식 문서/데이터시트 링크
 
 ## 참고 예제 (examples/, git submodule)

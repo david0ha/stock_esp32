@@ -45,7 +45,7 @@ static void test_success(void) {
 
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("KEY", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("KEY", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 1);
     CHECK(c.valid);
     CHECK(c.count == 1);
@@ -64,7 +64,7 @@ static void test_week_offset_in_url(void) {
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
 
-    econ_service_fetch("KEY", now, 0, -1, ECON_IMPACT_HIGH, &c);
+    econ_service_fetch("KEY", NULL, now, 0, -1, ECON_IMPACT_HIGH, &c);
     CHECK(strstr(g_last_url, "from=2026-06-08") != NULL);
     CHECK(strstr(g_last_url, "to=2026-06-14") != NULL);
     CHECK_STR(c.week_label, "06-08 ~ 06-14");
@@ -74,7 +74,7 @@ static void test_missing_key(void) {
     printf("test_missing_key\n");
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 0);
     CHECK(!c.valid);
     CHECK(c.error[0] != '\0');
@@ -86,7 +86,7 @@ static void test_transport_failure(void) {
     g_next_body = NULL; g_next_status = 0;
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("KEY", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("KEY", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 0);
     CHECK(!c.valid);
     CHECK(c.error[0] != '\0');
@@ -99,7 +99,7 @@ static void test_http_error_status(void) {
     g_next_status = 403;
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("KEY", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("KEY", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 0);
     CHECK(!c.valid);
     CHECK(strstr(c.error, "Limit Reach") != NULL);
@@ -114,7 +114,7 @@ static void test_plaintext_error_body(void) {
     g_next_status = 402;
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("KEY", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("KEY", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 0);
     CHECK(!c.valid);
     CHECK(strstr(c.error, "Restricted Endpoint") != NULL);
@@ -127,7 +127,7 @@ static void test_fmp_error_200(void) {
     g_next_status = 200;
     econ_calendar_t c;
     time_t now = (time_t)econ_ymd_to_epoch(2026, 6, 16, 12, 0, 0);
-    int rc = econ_service_fetch("KEY", now, 0, 0, ECON_IMPACT_HIGH, &c);
+    int rc = econ_service_fetch("KEY", NULL, now, 0, 0, ECON_IMPACT_HIGH, &c);
     CHECK(rc == 0);
     CHECK(!c.valid);
     CHECK(strstr(c.error, "Invalid API KEY") != NULL);

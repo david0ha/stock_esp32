@@ -89,8 +89,28 @@ if(SANITIZE)
     target_link_options(test_econ_service PRIVATE -fsanitize=address,undefined)
 endif()
 
+# stock_api_json: pure serializers for the companion-app control API. Linked against cJSON only
+# to validate the output is well-formed JSON with the expected fields.
+add_executable(test_api_json
+    test_api_json.c
+    ${CORE}/stock_api_json.c
+    ${CJSON}/cJSON.c)
+
+target_include_directories(test_api_json PRIVATE
+    ${CORE}/include
+    ${CJSON})
+
+target_compile_options(test_api_json PRIVATE -Wall -Wextra -O0 -g)
+target_link_libraries(test_api_json m)
+
+if(SANITIZE)
+    target_compile_options(test_api_json PRIVATE -fsanitize=address,undefined)
+    target_link_options(test_api_json PRIVATE -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_test(NAME parse COMMAND test_parse)
 add_test(NAME service COMMAND test_service)
 add_test(NAME econ COMMAND test_econ)
 add_test(NAME econ_service COMMAND test_econ_service)
+add_test(NAME api_json COMMAND test_api_json)

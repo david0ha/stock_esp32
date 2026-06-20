@@ -13,6 +13,7 @@
 #include "provisioning.h"
 #include "net_time.h"
 #include "board_io.h"
+#include "stock_api.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "main";
@@ -166,5 +167,10 @@ extern "C" void app_main(void)
 			Lvgl_unlock();
 		}
 		UserApp_TaskInit(&cfg);
+
+		// Bring up the companion-app control server on the home LAN (HTTP + mDNS
+		// "tickerboard.local"). It reads/drives the running app via the user_app_control
+		// bridge, so the phone app can manage the watchlist and display once we are online.
+		stock_api_start();
 	}
 }
