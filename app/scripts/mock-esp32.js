@@ -50,7 +50,7 @@ const NETWORKS = [
   { ssid: 'Home 5G', rssi: -48, secure: true },
   { ssid: 'Home 2.4G', rssi: -60, secure: true },
   { ssid: 'CoffeeShop Guest', rssi: -72, secure: false },
-  { ssid: '우리집 와이파이', rssi: -55, secure: true },
+  { ssid: 'Home WiFi', rssi: -55, secure: true },
 ]
 
 // ---- Stock-control state (mutable; quotes drift on each poll) ----

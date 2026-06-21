@@ -30,7 +30,7 @@ TEST(json_escape_escapes_control_chars)
 TEST(json_escape_passes_utf8_untouched)
 {
     char out[64];
-    // 우리집 (Korean) must pass through byte-for-byte (no mojibake).
+    // Korean text (U+C6B0 U+B9AC U+C9D1) must pass through byte-for-byte (no mojibake).
     prov_json_escape("\xec\x9a\xb0\xeb\xa6\xac\xec\xa7\x91", out, sizeof(out));
     CHECK_STR(out, "\xec\x9a\xb0\xeb\xa6\xac\xec\xa7\x91");
 }

@@ -1,63 +1,63 @@
-# LVGL 시뮬레이터 (보드 없이 UI 확인)
+# LVGL Simulator (Verify the UI Without a Board)
 
-ESP32-S3-RLCD-4.2 의 LVGL UI를 **보드 연결 없이** macOS에서 렌더링해 확인하는 도구.
-위치: `sim/`.
+A tool for rendering and checking the LVGL UI of the ESP32-S3-RLCD-4.2 on macOS **without connecting a board**.
+Location: `sim/`.
 
-## 무엇을 하나
+## What It Does
 
-- ESP-IDF 프로젝트(저장소 루트)의 **LVGL 소스와 GUI Guider UI를 그대로 재사용**한다.
-- 디바이스의 `Lvgl_FlushCallback` 과 **동일한 흑백 이진화 규칙**(`픽셀 < 0x7FFF ? 검정 : 흰색`)을
-  적용 → 반사형 흑백 패널에 실제로 보일 모습을 그대로 재현한다.
-- 헤드리스로 렌더링해 **PNG 스크린샷**으로 저장(GUI 창 불필요).
+- **Reuses the LVGL sources and GUI Guider UI as-is** from the ESP-IDF project (repository root).
+- Applies the **same black-and-white binarization rule** as the device's `Lvgl_FlushCallback`
+  (`pixel < 0x7FFF ? black : white`) → reproducing exactly how it will actually look on the reflective black-and-white panel.
+- Renders headlessly and saves **PNG screenshots** (no GUI window required).
 
-## 사용법
+## Usage
 
 ```bash
 cd sim
-./sim.sh        # 빌드 → 실행 → shots/sim_frame1.png, sim_frame2.png 생성
+./sim.sh        # build → run → generate shots/sim_frame1.png, sim_frame2.png
 ```
 
-수동 단계:
+Manual steps:
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
-./build/sim shots                       # BMP 출력
+./build/sim shots                       # BMP output
 sips -s format png shots/sim_frame1.bmp --out shots/sim_frame1.png
 ```
 
-## 구성
+## Structure
 
-| 파일 | 역할 |
+| File | Role |
 |------|------|
-| `main_sim.c` | 헤드리스 LVGL 디스플레이 + RGB565→흑백 + BMP 저장 |
-| `lv_conf.h` | LVGL 설정 (색심도 16=디바이스 동일, snapshot/log on, CLIB malloc) |
-| `CMakeLists.txt` | LVGL(예제 managed_components) + ui_bsp 소스를 묶어 빌드 |
-| `sim.sh` | 빌드+실행+PNG 변환 한 번에 |
+| `main_sim.c` | Headless LVGL display + RGB565→black/white + BMP save |
+| `lv_conf.h` | LVGL configuration (color depth 16 = same as device, snapshot/log on, CLIB malloc) |
+| `CMakeLists.txt` | Bundles LVGL (example managed_components) + ui_bsp sources for the build |
+| `sim.sh` | Build + run + PNG conversion in one step |
 
-## 현재 예제(09_LVGL_V9_Test)의 UI
+## UI of the Current Example (09_LVGL_V9_Test)
 
-`screen_img_1`(곰), `screen_img_2`(고양이) 두 전체화면 이미지가 1.5초마다 교대.
-`main_sim.c`가 각 이미지를 표시한 상태로 2장을 캡처한다.
+Two full-screen images, `screen_img_1` (bear) and `screen_img_2` (cat), alternate every 1.5 seconds.
+`main_sim.c` captures the two images, each in its displayed state.
 
-## 알아둘 점 / 한계
+## Things to Know / Limitations
 
-- **이진화 규칙이 거칠다**: 디바이스가 쓰는 `px < 0x7FFF` 단순 임계값이라, 컬러/중간톤
-  이미지(곰)는 거의 검정 실루엣으로 나온다. 사진(고양이)은 대비가 커서 흑백이 잘 나뉜다.
-  → 더 나은 모노 표현을 원하면 **디더링**이나 **루미넌스 임계값**으로 바꿔야 한다
-  (이건 디바이스 펌웨어의 flush 콜백을 함께 바꿔야 실물과 일치).
-- 시뮬레이터는 **LVGL UI 레이어만** 재현한다. 오디오/센서/SD/실제 SPI 타이밍/반사형 패널의
-  물리적 명암은 실물 보드에서만 확인 가능.
-- UI 코드(`ui_bsp`)는 하드웨어 비종속이므로, 보드용 펌웨어와 **같은 UI 소스**를 공유해
-  디자인을 빠르게 반복할 수 있다.
+- **The binarization rule is coarse**: it is the simple `px < 0x7FFF` threshold that the device uses, so color/midtone
+  images (the bear) come out as a nearly black silhouette. Photos (the cat) have high contrast, so black and white separate well.
+  → For a better monochrome representation, you should switch to **dithering** or a **luminance threshold**
+  (this must be changed together with the device firmware's flush callback to match the real hardware).
+- The simulator reproduces **only the LVGL UI layer**. Audio/sensors/SD/actual SPI timing/the physical contrast of the
+  reflective panel can only be verified on the real board.
+- Because the UI code (`ui_bsp`) is hardware-independent, it shares the **same UI sources** as the board firmware,
+  allowing you to iterate on the design quickly.
 
-## 버튼/상태 시뮬레이션
+## Button/State Simulation
 
-현재 예제 UI에는 버튼이 없어 두 이미지 토글만 캡처한다. 버튼/위젯이 추가되면
-`main_sim.c`에서 (a) 위젯 상태를 직접 바꾸거나 (b) `lv_indev` 입력을 주입한 뒤
-스냅샷을 떠서 상태별 화면을 캡처할 수 있다.
+The current example UI has no buttons, so it only captures the toggle between the two images. Once buttons/widgets are added,
+in `main_sim.c` you can (a) change the widget state directly or (b) inject `lv_indev` input, then take a
+snapshot to capture per-state screens.
 
-## (선택) 인터랙티브 SDL 창
+## (Optional) Interactive SDL Window
 
-지금은 헤드리스 스크린샷 방식이다. 마우스/키보드로 **직접 클릭**하는 실시간 창이 필요하면
-LVGL 9의 SDL 드라이버(`lv_sdl_window` + `lv_sdl_mouse`)로 창 모드를 추가할 수 있다
-(SDL2 설치됨: `/opt/homebrew/opt/sdl2`). 필요 시 요청.
+The current approach is headless screenshots. If you need a real-time window where you can **click directly** with mouse/keyboard,
+you can add a windowed mode using LVGL 9's SDL driver (`lv_sdl_window` + `lv_sdl_mouse`)
+(SDL2 is installed: `/opt/homebrew/opt/sdl2`). Request it when needed.

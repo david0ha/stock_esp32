@@ -1,14 +1,14 @@
-# ESP32-S3-RLCD-4.2 — 핀 할당표
+# ESP32-S3-RLCD-4.2 — Pin Assignment Table
 
-아래 GPIO 번호는 Zephyr 보드 devicetree(`esp32s3_rlcd_4_2`)의 `pinctrl` 및
-보드 dts에서 추출한 것이다. ESP-IDF에서도 동일한 물리 핀을 그대로 사용하면 된다.
+The GPIO numbers below were extracted from the `pinctrl` and board dts of the Zephyr board
+devicetree (`esp32s3_rlcd_4_2`). In ESP-IDF you can use the same physical pins as-is.
 
-> Zephyr 표기 변환: `gpio0.N` = GPIO N, `gpio1.N` = GPIO (32+N).
-> 예) CS `gpio1.8` = GPIO40, RST `gpio1.9` = GPIO41, DC `gpio0.5` = GPIO5.
+> Zephyr notation conversion: `gpio0.N` = GPIO N, `gpio1.N` = GPIO (32+N).
+> e.g., CS `gpio1.8` = GPIO40, RST `gpio1.9` = GPIO41, DC `gpio0.5` = GPIO5.
 
-## 디스플레이 — SPI (SPIM2, ST7305/ST7306)
+## Display — SPI (SPIM2, ST7305/ST7306)
 
-| 신호 | GPIO |
+| Signal | GPIO |
 |------|------|
 | SCLK (Clock) | 11 |
 | MOSI | 12 |
@@ -16,24 +16,24 @@
 | DC (Data/Command, active-high) | 5 |
 | RESET (active-low) | 41 |
 
-> 반사형 흑백 패널이므로 백라이트 핀 없음.
+> Reflective monochrome panel, so there is no backlight pin.
 
-## I2C0 (터치 / RTC / 온습도)
+## I2C0 (Touch / RTC / Temperature-Humidity)
 
-| 신호 | GPIO |
+| Signal | GPIO |
 |------|------|
 | SDA | 13 |
 | SCL | 14 |
 
-| 디바이스 | 주소 | 비고 |
+| Device | Address | Notes |
 |----------|------|------|
 | PCF85063A RTC | 0x51 | INT1 = GPIO15 |
-| SHTC3 온습도 | 0x70 | |
-| 정전식 터치 컨트롤러 | (보드 자료 확인) | 동일 I2C 버스 |
+| SHTC3 temperature/humidity | 0x70 | |
+| Capacitive touch controller | (check board documentation) | Same I2C bus |
 
-## 오디오 — I2S0 (ES8311 / ES7210)
+## Audio — I2S0 (ES8311 / ES7210)
 
-| 신호 | GPIO |
+| Signal | GPIO |
 |------|------|
 | MCLK | 16 |
 | BCLK (Bit Clock, out) | 9 |
@@ -41,42 +41,42 @@
 | DOUT (Serial Data out) | 10 |
 | DIN (Serial Data in) | 8 |
 
-> 코덱 제어 레지스터는 I2C0(GPIO13/14)를 통해 접근.
+> The codec control registers are accessed via I2C0 (GPIO13/14).
 
 ## microSD — SDMMC (SDHC0, 1-bit)
 
-| 신호 | GPIO |
+| Signal | GPIO |
 |------|------|
 | CMD | 21 |
 | CLK | 38 |
 | D0 | 39 |
 
-## UART0 (콘솔)
+## UART0 (Console)
 
-| 신호 | GPIO |
+| Signal | GPIO |
 |------|------|
 | TX | 43 |
 | RX | 44 |
 
-> 기본 보레이트 115200. ESP32-S3 네이티브 USB Serial/JTAG로도 콘솔 출력 가능.
+> Default baud rate 115200. Console output is also available via the ESP32-S3 native USB Serial/JTAG.
 
-## 버튼
+## Buttons
 
-| 버튼 | GPIO | 비고 |
+| Button | GPIO | Notes |
 |------|------|------|
 | BOOT (Button0) | 0 | pull-up, active-low |
 | USER (Button1) | 18 | pull-up, active-low |
-| Power | (전원 회로) | |
+| Power | (power circuit) | |
 
 ## ADC
 
-| 용도 | 채널 | 비고 |
+| Purpose | Channel | Notes |
 |------|------|------|
-| 배터리 전압 (vbatt) | ADC 채널 3 | 분압 회로 경유 |
+| Battery voltage (vbatt) | ADC channel 3 | Via voltage divider circuit |
 
-## 확인이 필요한 항목
+## Items Requiring Confirmation
 
-- 터치 컨트롤러 I2C 주소/INT 핀: Waveshare 회로도/예제로 확정 필요.
-- RGB/상태 LED 핀: 자료 간 상충(일부 자료 GPIO38 언급, 그러나 GPIO38은
-  SDMMC CLK로 사용됨)이 있어 보드 회로도로 확정 필요.
-- 정확한 핀은 항상 [docs/references.md](references.md)의 Zephyr devicetree 원본으로 재확인.
+- Touch controller I2C address/INT pin: must be confirmed via the Waveshare schematic/examples.
+- RGB/status LED pin: sources conflict (some mention GPIO38, but GPIO38 is used as
+  SDMMC CLK), so it must be confirmed via the board schematic.
+- Always re-verify the exact pins against the original Zephyr devicetree in [docs/references.md](references.md).

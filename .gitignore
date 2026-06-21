@@ -1,23 +1,23 @@
-# OMC (oh-my-claudecode) 로컬 상태 — 커밋 대상 아님
+# OMC (oh-my-claudecode) local state — not for committing
 .omc/
 
-# ESP-IDF 빌드 산출물
+# ESP-IDF build artifacts
 build/
 sdkconfig.old
-# 생성되는 개발자별 설정(Finnhub 키·WiFi 비밀번호 포함) — 절대 커밋 금지. 공유 설정은 sdkconfig.defaults
+# Generated per-developer config (includes Finnhub key and WiFi password) — never commit. Shared config goes in sdkconfig.defaults
 sdkconfig
 *.pyc
 __pycache__/
 
-# ESP-IDF 컴포넌트 매니저가 받은 의존성 (재생성 가능)
+# Dependencies fetched by the ESP-IDF component manager (regenerable)
 managed_components/
 dependencies.lock
 
-# LVGL 시뮬레이터 스크린샷 산출물
+# LVGL simulator screenshot artifacts
 sim/shots/
 shots/
 
-# Claude Code 로컬 상태 / git worktree — 커밋 대상 아님
+# Claude Code local state / git worktree — not for committing
 .claude/
 
 # clangd / editor index caches
