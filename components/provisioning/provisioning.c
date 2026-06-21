@@ -15,7 +15,17 @@
 
 static const char *TAG = "provisioning";
 
+// How long to keep the SoftAP up after a confirmed app join so the phone can read the
+// "connected" status before we reboot into station-only mode. This board has no Kconfig for the
+// provisioning flow, so it is a local constant rather than a CONFIG_* option.
+#define PROV_CONFIRM_GRACE_MS 9000
+
 static const prov_options_t *s_opts;
+
+// App-driven credential check (POST /api/provision): the pending credentials and an in-flight
+// guard so a double submit does not spawn two connect tasks.
+static prov_config_t s_pending;
+static volatile bool s_app_connecting;
 
 static void emit(prov_event_t event, const char *info)
 {
@@ -46,6 +56,58 @@ static void on_portal_save(const prov_config_t *cfg, void *user)
     xTaskCreate(reboot_task, "prov_reboot", 2048, NULL, 5, NULL);
 }
 
+// Verify app-submitted credentials with a live station join WHILE the SoftAP stays up (so the
+// app can poll GET /api/status), and only on success persist them (SSID/password + watchlist)
+// and reboot into station mode. Runs as its own task because prov_wifi_connect_keep_ap blocks
+// for the connect timeout.
+static void app_connect_task(void *arg)
+{
+    (void)arg;
+    prov_config_t cfg = s_pending;
+    uint32_t timeout_ms = s_opts ? s_opts->sta_connect_timeout_ms : 15000;
+
+    bool joined = prov_wifi_connect_keep_ap(cfg.ssid, cfg.password, timeout_ms);
+    if (joined && prov_store_save(&cfg)) {
+        emit(PROV_EVENT_CONFIG_SAVED, cfg.ssid);
+        prov_portal_set_status(PROV_PORTAL_CONNECTED, cfg.ssid, NULL);
+        // Hold the SoftAP a moment so the phone reads "connected", then reboot into clean
+        // station-only mode where the boot path reconnects with the saved credentials.
+        ESP_LOGI(TAG, "credentials confirmed for '%s'; rebooting into station mode in %dms",
+                 cfg.ssid, PROV_CONFIRM_GRACE_MS);
+        vTaskDelay(pdMS_TO_TICKS(PROV_CONFIRM_GRACE_MS));
+        ESP_LOGI(TAG, "restarting to apply confirmed configuration");
+        esp_restart();
+    } else {
+        const char *reason = joined ? "save_failed" : "auth_failed";
+        ESP_LOGW(TAG, "provision attempt for '%s' failed (%s)", cfg.ssid, reason);
+        prov_portal_set_status(PROV_PORTAL_FAILED, cfg.ssid, reason);
+        s_app_connecting = false;  // let the app retry with new credentials
+    }
+    vTaskDelete(NULL);
+}
+
+// Portal callback for POST /api/provision: start the async connect test, ignoring a duplicate
+// submission while one is already running.
+static void on_app_provision(const prov_config_t *cfg, void *user)
+{
+    (void)user;
+    if (s_app_connecting) {
+        ESP_LOGW(TAG, "provision already in progress — ignoring duplicate submit");
+        return;
+    }
+    s_app_connecting = true;
+    s_pending = *cfg;
+    // Set CONNECTING only here — after the duplicate guard accepts — so a duplicate/retry submit
+    // can never clobber a terminal (failed/connected) status with a "connecting" that has no task
+    // driving it to a terminal state.
+    prov_portal_set_status(PROV_PORTAL_CONNECTING, cfg->ssid, NULL);
+    if (xTaskCreate(app_connect_task, "prov_connect", 4096, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to start connect task");
+        s_app_connecting = false;
+        prov_portal_set_status(PROV_PORTAL_FAILED, cfg->ssid, "internal_error");
+    }
+}
+
 static void ensure_nvs(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -73,10 +135,13 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
 
     prov_config_t cfg;
     bool have_config = prov_store_load(&cfg);
+    // One-shot escape hatch (USER+BOOT long-press): skip the connect and go straight to the setup
+    // portal, but keep the saved config so the portal pre-fills (the user only re-enters Wi-Fi).
+    bool forced = prov_store_take_force_portal();
 
     prov_wifi_init();
 
-    if (have_config) {
+    if (have_config && !forced) {
         ESP_LOGI(TAG, "stored network '%s' — attempting to connect", cfg.ssid);
         emit(PROV_EVENT_STA_CONNECTING, cfg.ssid);
         if (prov_wifi_connect(cfg.ssid, cfg.password, opts->sta_connect_timeout_ms)) {
@@ -85,6 +150,8 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
             return true;
         }
         ESP_LOGW(TAG, "could not join '%s' — falling back to setup portal", cfg.ssid);
+    } else if (forced) {
+        ESP_LOGI(TAG, "user forced setup mode (USER+BOOT long-press) — starting portal");
     } else {
         ESP_LOGI(TAG, "no stored network — starting setup portal");
     }
@@ -100,7 +167,14 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
     // background refresh that runs once the AP is up.
     prov_wifi_start_scanning();
     prov_wifi_start_ap(ap_ssid);
-    prov_portal_start(have_config ? &cfg : NULL, on_portal_save, NULL);
+    // Identity for GET /api/info is derived internally (the public options carry no device id):
+    // the MAC suffix uniquely names this board, and the model is the fixed product name.
+    prov_portal_info_t info = {
+        .device_id = suffix,
+        .model = "Ticker Board",
+        .ap_ssid = ap_ssid,
+    };
+    prov_portal_start(have_config ? &cfg : NULL, on_portal_save, on_app_provision, &info, NULL);
     emit(PROV_EVENT_PORTAL_STARTED, ap_ssid);
 
     ESP_LOGI(TAG, "setup portal ready — join Wi-Fi '%s' and open http://192.168.4.1", ap_ssid);

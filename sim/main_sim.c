@@ -266,9 +266,9 @@ int main(int argc, char **argv) {
     const econ_event_t *picked[HOME_ECON_MAX];
     int en = 0;
     if (*home_fmp) {
-        econ_service_fetch(home_fmp, now_home, tz_home, 0, ECON_IMPACT_HIGH, &home_cal);
+        econ_service_fetch(home_fmp, NULL, now_home, tz_home, 0, ECON_IMPACT_HIGH, &home_cal);
         if (home_cal.valid && econ_next_after(&home_cal, (int64_t)now_home) < 0)
-            econ_service_fetch(home_fmp, now_home, tz_home, +1, ECON_IMPACT_HIGH, &home_cal);
+            econ_service_fetch(home_fmp, NULL, now_home, tz_home, +1, ECON_IMPACT_HIGH, &home_cal);
         if (home_cal.valid)
             en = econ_collect_upcoming(&home_cal, (int64_t)now_home, picked, HOME_ECON_MAX);
         printf("[home econ] valid=%d count=%d upcoming=%d %s\n", home_cal.valid,
@@ -330,7 +330,7 @@ int main(int argc, char **argv) {
 
     econ_calendar_t cal;
     if (*fmp) {
-        econ_service_fetch(fmp, now, tz_off, 0, ECON_IMPACT_MEDIUM, &cal);
+        econ_service_fetch(fmp, NULL, now, tz_off, 0, ECON_IMPACT_MEDIUM, &cal);
         printf("[econ] week %s valid=%d count=%d/%d %s\n", cal.week_label,
                cal.valid, cal.count, cal.total_matched, cal.valid ? "" : cal.error);
     } else {

@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "prov_config.c"
         "form_parse.c"
+        "prov_json.c"
         "prov_store.c"
         "prov_wifi.c"
         "prov_portal.c"

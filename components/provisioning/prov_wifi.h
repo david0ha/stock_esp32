@@ -20,8 +20,15 @@ typedef struct {
 void prov_wifi_init(void);
 
 // Try to join `ssid`/`password` as a station, waiting up to `timeout_ms` for an IP.
-// Returns true on success. Safe to call after a previous failed attempt.
+// Returns true on success. Safe to call after a previous failed attempt. Switches the radio to
+// station-only mode (tearing down any running SoftAP) — used on the boot path.
 bool prov_wifi_connect(const char *ssid, const char *password, uint32_t timeout_ms);
+
+// Like prov_wifi_connect, but leaves the current radio mode untouched so a running SoftAP keeps
+// serving the captive portal during the join. Used by the app-driven credential check (POST
+// /api/provision): the phone stays associated to the AP and polls GET /api/status. On FAILURE
+// the SoftAP channel is restored so the phone can re-reach the portal and read the result.
+bool prov_wifi_connect_keep_ap(const char *ssid, const char *password, uint32_t timeout_ms);
 
 // Bring up an open SoftAP named `ap_ssid` (mode becomes APSTA).
 void prov_wifi_start_ap(const char *ap_ssid);

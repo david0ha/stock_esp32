@@ -52,7 +52,7 @@ static void error_from_body(char *dst, size_t n, const char *body, int status) {
     snprintf(dst, n, "HTTP %d", status);
 }
 
-int econ_service_fetch(const char *fmp_key, time_t now_utc, long tz_off,
+int econ_service_fetch(const char *fmp_key, const char *base_url, time_t now_utc, long tz_off,
                        int week_offset, int min_impact, econ_calendar_t *out) {
     char from[12], to[12], label[ECON_LABEL_MAXLEN];
     econ_week_range(now_utc, tz_off, week_offset,
@@ -63,9 +63,10 @@ int econ_service_fetch(const char *fmp_key, time_t now_utc, long tz_off,
         memset(out, 0, sizeof(*out));
         snprintf(out->error, sizeof(out->error), "no FMP API key set");
     } else {
+        const char *base = (base_url && *base_url) ? base_url : CONFIG_STOCK_ECON_BASE_URL;
         char url[URL_MAX];
         snprintf(url, sizeof(url), "%s?from=%s&to=%s&apikey=%s",
-                 CONFIG_STOCK_ECON_BASE_URL, from, to, fmp_key);
+                 base, from, to, fmp_key);
 
         int st = 0;
         char *body = http_get(url, &st);

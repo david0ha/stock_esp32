@@ -13,6 +13,7 @@
 #include "provisioning.h"
 #include "net_time.h"
 #include "board_io.h"
+#include "stock_api.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "main";
@@ -101,7 +102,8 @@ static void OnProvisioningEvent(prov_event_t event, const char *info, void *user
 		break;
 	case PROV_EVENT_PORTAL_STARTED:
 		snprintf(hint, sizeof(hint),
-		         "1. Join Wi-Fi:  %s\n2. Open  192.168.4.1", info ? info : "");
+		         "1. Join Wi-Fi:  %s\n2. Stay connected, then open\n   the app to finish setup",
+		         info ? info : "");
 		SetStatus("Set up Wi-Fi", hint);
 		break;
 	case PROV_EVENT_CONFIG_SAVED:
@@ -166,5 +168,10 @@ extern "C" void app_main(void)
 			Lvgl_unlock();
 		}
 		UserApp_TaskInit(&cfg);
+
+		// Bring up the companion-app control server on the home LAN (HTTP + mDNS
+		// "tickerboard.local"). It reads/drives the running app via the user_app_control
+		// bridge, so the phone app can manage the watchlist and display once we are online.
+		stock_api_start();
 	}
 }

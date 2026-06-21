@@ -11,6 +11,7 @@ idf_component_register(
     SRCS
         "stock_parse.c"
         "stock_service.c"
+        "stock_api_json.c"
         "econ_parse.c"
         "econ_service.c"
         "weather_parse.c"

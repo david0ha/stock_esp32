@@ -33,6 +33,12 @@ bool prov_store_load(prov_config_t *cfg)
         prov_tickers_parse(cfg, csv);
     }
 
+    len = sizeof(cfg->finnhub_key);
+    nvs_get_str(h, "fh_key", cfg->finnhub_key, &len);
+    len = sizeof(cfg->fmp_key);
+    nvs_get_str(h, "fmp_key", cfg->fmp_key, &len);
+    len = sizeof(cfg->econ_url);
+    nvs_get_str(h, "econ_url", cfg->econ_url, &len);
     len = sizeof(cfg->location);
     nvs_get_str(h, "loc", cfg->location, &len);
 
@@ -55,6 +61,9 @@ bool prov_store_save(const prov_config_t *cfg)
     nvs_set_str(h, "ssid", cfg->ssid);
     nvs_set_str(h, "pass", cfg->password);
     nvs_set_str(h, "tickers", csv);
+    nvs_set_str(h, "fh_key", cfg->finnhub_key);
+    nvs_set_str(h, "fmp_key", cfg->fmp_key);
+    nvs_set_str(h, "econ_url", cfg->econ_url);
     nvs_set_str(h, "loc", cfg->location);
 
     err = nvs_commit(h);
@@ -76,4 +85,31 @@ void prov_store_clear(void)
     nvs_erase_all(h);
     nvs_commit(h);
     nvs_close(h);
+}
+
+void prov_store_set_force_portal(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PROV_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_set_u8(h, "force_ap", 1);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+bool prov_store_take_force_portal(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PROV_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return false;
+    }
+    uint8_t v = 0;
+    nvs_get_u8(h, "force_ap", &v);
+    if (v != 0) {
+        nvs_erase_key(h, "force_ap");  // one-shot: consume so the next reboot connects normally
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    return v != 0;
 }
