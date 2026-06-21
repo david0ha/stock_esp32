@@ -25,6 +25,7 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#include <esp_system.h>   /* esp_restart for the force-AP escape hatch */
 
 #include "sdkconfig.h"
 #include "cJSON.h"
@@ -106,6 +107,11 @@ static prov_config_t s_cfg;
  * costs at most CHORD_WINDOW_MS of latency. */
 #define CHORD_POLL_MS    15
 #define CHORD_WINDOW_MS  120
+
+/* Holding USER+BOOT together for this long forces Wi-Fi setup (AP) mode — the escape hatch when
+ * the board is stuck on a network the user can't reach. A short chord still toggles the econ
+ * overlay; the two are told apart by how long both buttons stay held. */
+#define FORCE_AP_HOLD_MS 5000
 
 /* Commands injected by the companion-app HTTP server (components/stock_api) through the
  * user_app_control bridge. They are applied on StockTask via the same code paths as a button
@@ -771,13 +777,36 @@ static void handle_press(button_id_t id, int64_t refresh_us) {
     }
 }
 
+/* USER+BOOT held FORCE_AP_HOLD_MS: set the one-shot force-portal flag, show a brief confirmation,
+ * and reboot into Wi-Fi setup (AP) mode. The saved config (watchlist/keys/location) is kept so the
+ * portal pre-fills and the user only re-enters Wi-Fi. Does not return. */
+static void force_ap_mode(void) {
+    ESP_LOGW(TAG, "USER+BOOT long-press -> forcing Wi-Fi setup (AP) mode");
+    prov_store_set_force_portal();
+    if (Lvgl_lock(-1)) {
+        lv_obj_t *ov = lv_obj_create(lv_screen_active());
+        lv_obj_remove_style_all(ov);
+        lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_color(ov, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
+        lv_obj_t *lbl = lv_label_create(ov);
+        lv_label_set_text(lbl, "Wi-Fi setup mode\nrestarting...");
+        lv_obj_set_style_text_color(lbl, lv_color_black(), 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(lbl);
+        Lvgl_unlock();
+    }
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+}
+
 /*
  * StockTask — input + render only (higher priority), but it also performs the
  * economic-calendar fetch inline, so it carries a big stack (TLS + JSON). Button
  * presses are handled the instant they arrive:
  *   USER (GPIO18) -> next ticker; paints cached data now, fetches only if stale
  *   BOOT (GPIO0)  -> next view (home/chart/news/metrics), pure local page swap
- *   USER+BOOT     -> toggle the economic-calendar overlay (in it: prev/next week)
+ *   USER+BOOT     -> tap: toggle the economic-calendar overlay; hold 5s: force Wi-Fi setup
  * Between presses it wakes every HOME_TICK_SECONDS to keep the home clock and
  * battery chip live, and kicks a background refresh of the on-screen ticker on
  * the (slower) REFRESH cadence.
@@ -829,7 +858,18 @@ static void StockTask(void *arg) {
             if (chord) {
                 button_event_t drop;   /* discard the partner edge(s) of the chord */
                 while (xQueueReceive(s_btn_queue, &drop, 0) == pdTRUE) { }
-                toggle_econ();
+                /* A short chord toggles the econ overlay; both held for FORCE_AP_HOLD_MS forces
+                 * Wi-Fi setup mode. Poll until release (econ) or the hold threshold (force AP). */
+                int held_ms = 0;
+                while (buttons_both_pressed() && held_ms < FORCE_AP_HOLD_MS) {
+                    vTaskDelay(pdMS_TO_TICKS(CHORD_POLL_MS));
+                    held_ms += CHORD_POLL_MS;
+                }
+                if (held_ms >= FORCE_AP_HOLD_MS) {
+                    force_ap_mode();   /* sets the flag + reboots — does not return */
+                } else {
+                    toggle_econ();
+                }
             } else {
                 handle_press(ev.id, refresh_us);
             }

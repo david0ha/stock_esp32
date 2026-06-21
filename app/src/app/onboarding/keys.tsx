@@ -1,4 +1,5 @@
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useState } from 'react'
 import { useRouter } from 'expo-router'
 import { StepScaffold } from '../../components/StepScaffold'
 import { IconBadge } from '../../components/IconBadge'
@@ -42,6 +43,7 @@ export default function Keys() {
           onChangeText={setFinnhubKey}
           placeholder="paste your key"
           hint="Powers stock quotes. Get a free key at finnhub.io."
+          secret
         />
 
         <Field
@@ -50,6 +52,7 @@ export default function Keys() {
           onChangeText={setFmpKey}
           placeholder="economic-calendar key / proxy token"
           hint="Only needed for the economic calendar via FMP or a self-hosted proxy."
+          secret
         />
 
         <Field
@@ -59,6 +62,7 @@ export default function Keys() {
           placeholder={DEFAULT_ECON_URL}
           hint="Override the calendar base URL (FMP direct or your own proxy). Leave blank to use the default."
           keyboardType="url"
+          secret
         />
 
         {/* Plain free-text only — NO city autocomplete here. During onboarding the phone is joined
@@ -83,6 +87,7 @@ function Field({
   placeholder,
   hint,
   keyboardType,
+  secret,
 }: {
   label: string
   value: string
@@ -90,7 +95,12 @@ function Field({
   placeholder: string
   hint: string
   keyboardType?: 'url'
+  secret?: boolean
 }) {
+  // Mask secrets (keys / proxy token in the URL) by default, with a reveal toggle so a long
+  // pasted key can still be eyeballed for typos. Non-secret fields render unchanged.
+  const [reveal, setReveal] = useState(false)
+  const masked = secret && !reveal
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -102,9 +112,17 @@ function Field({
           placeholderTextColor={colors.textFaint}
           autoCapitalize="none"
           autoCorrect={false}
-          keyboardType={keyboardType}
+          keyboardType={masked ? undefined : keyboardType}
+          secureTextEntry={masked}
+          autoComplete={secret ? 'off' : undefined}
+          textContentType={secret ? 'none' : undefined}
           style={styles.input}
         />
+        {secret ? (
+          <Pressable onPress={() => setReveal((v) => !v)} hitSlop={8} style={styles.reveal}>
+            <Text style={styles.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
+          </Pressable>
+        ) : null}
       </View>
       <Text style={styles.hint}>{hint}</Text>
     </View>
@@ -150,6 +168,15 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     paddingVertical: 12,
+  },
+  reveal: {
+    paddingLeft: 12,
+    paddingVertical: 8,
+  },
+  revealText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
   },
   hint: {
     fontSize: 12,

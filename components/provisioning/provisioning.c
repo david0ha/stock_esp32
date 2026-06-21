@@ -135,10 +135,13 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
 
     prov_config_t cfg;
     bool have_config = prov_store_load(&cfg);
+    // One-shot escape hatch (USER+BOOT long-press): skip the connect and go straight to the setup
+    // portal, but keep the saved config so the portal pre-fills (the user only re-enters Wi-Fi).
+    bool forced = prov_store_take_force_portal();
 
     prov_wifi_init();
 
-    if (have_config) {
+    if (have_config && !forced) {
         ESP_LOGI(TAG, "stored network '%s' — attempting to connect", cfg.ssid);
         emit(PROV_EVENT_STA_CONNECTING, cfg.ssid);
         if (prov_wifi_connect(cfg.ssid, cfg.password, opts->sta_connect_timeout_ms)) {
@@ -147,6 +150,8 @@ bool provisioning_run(const prov_options_t *opts, prov_config_t *out)
             return true;
         }
         ESP_LOGW(TAG, "could not join '%s' — falling back to setup portal", cfg.ssid);
+    } else if (forced) {
+        ESP_LOGI(TAG, "user forced setup mode (USER+BOOT long-press) — starting portal");
     } else {
         ESP_LOGI(TAG, "no stored network — starting setup portal");
     }

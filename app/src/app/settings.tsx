@@ -323,6 +323,8 @@ function KeyRow({
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
   const [failed, setFailed] = useState(false)
+  // Keys + the proxy URL (which can embed a token) are masked by default; reveal to check a paste.
+  const [reveal, setReveal] = useState(false)
 
   const status = isSet === undefined ? 'unknown' : isSet ? 'set' : 'not set'
 
@@ -358,10 +360,16 @@ function KeyRow({
           placeholderTextColor={colors.textFaint}
           autoCapitalize="none"
           autoCorrect={false}
-          keyboardType={keyboardType}
+          keyboardType={reveal ? keyboardType : undefined}
+          secureTextEntry={!reveal}
+          autoComplete="off"
+          textContentType="none"
           style={styles.hostInput}
           onSubmitEditing={save}
         />
+        <Pressable onPress={() => setReveal((v) => !v)} hitSlop={8} style={styles.keyReveal}>
+          <Text style={styles.keyRevealText}>{reveal ? 'Hide' : 'Show'}</Text>
+        </Pressable>
       </View>
       {failed ? <Text style={styles.error}>Couldn’t update. Please try again.</Text> : null}
       {done ? <Text style={styles.saved}>Updated.</Text> : null}
@@ -453,6 +461,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     color: colors.text,
     fontSize: 16,
+  },
+  keyReveal: {
+    justifyContent: 'center',
+    paddingLeft: 12,
+  },
+  keyRevealText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
   },
   error: {
     fontSize: 13,

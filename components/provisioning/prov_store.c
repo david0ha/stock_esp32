@@ -86,3 +86,30 @@ void prov_store_clear(void)
     nvs_commit(h);
     nvs_close(h);
 }
+
+void prov_store_set_force_portal(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PROV_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_set_u8(h, "force_ap", 1);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+bool prov_store_take_force_portal(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(PROV_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return false;
+    }
+    uint8_t v = 0;
+    nvs_get_u8(h, "force_ap", &v);
+    if (v != 0) {
+        nvs_erase_key(h, "force_ap");  // one-shot: consume so the next reboot connects normally
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    return v != 0;
+}
