@@ -1,5 +1,6 @@
 # stock_esp32 — Reflective-LCD Stock & Desk Dashboard
-![Uploading F4BDAF51-DB9F-4ABE-9FC6-8A1EB94FD674_1_201_a.jpeg…]()
+
+<img width="1290" height="2290" alt="F4BDAF51-DB9F-4ABE-9FC6-8A1EB94FD674_1_201_a" src="https://github.com/user-attachments/assets/093db584-dd26-463a-8a51-a000dd91a2e5" />
 
 
 Firmware (and a local companion app) for a always-on desk dashboard built on the
