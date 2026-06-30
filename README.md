@@ -1,4 +1,6 @@
 # stock_esp32 — Reflective-LCD Stock & Desk Dashboard
+![Uploading F4BDAF51-DB9F-4ABE-9FC6-8A1EB94FD674_1_201_a.jpeg…]()
+
 
 Firmware (and a local companion app) for a always-on desk dashboard built on the
 **Waveshare ESP32-S3-RLCD-4.2** board. It shows live stock quotes, weather/forecast,
